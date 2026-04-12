@@ -69,16 +69,17 @@ async function runSmokeTest() {
     const result = await clobClient.getApiKeys();
 
     // O SDK v2.x NÃO lança exceção em 401 — loga internamente e retorna
-    // undefined/null ou { error: '...' }. Checamos ambos os casos.
-    const errorMsg = result?.error ?? null;
-    if (!result || errorMsg) {
-      const fake = new Error(errorMsg ?? "Unauthorized/Invalid api key");
+    // undefined, null, {} ou { error: '...' }. getApiKeys() DEVE retornar
+    // um array; qualquer coisa diferente disso significa falha de auth.
+    if (!Array.isArray(result)) {
+      const msg = result?.error ?? "Unauthorized/Invalid api key (SDK retornou resposta inesperada)";
+      const fake = new Error(msg);
       fake.status = 401;
       throw fake;
     }
 
     // Chegou aqui: autenticação L2 aceita pelo servidor.
-    const keyCount = Array.isArray(result) ? result.length : "?";
+    const keyCount = result.length;
     console.log(
       `${G}${B}╔══════════════════════════════════════════════════════════╗${X}\n` +
       `${G}${B}║  [SUCESSO] Chaves validadas e conexão L2 perfeita!       ║${X}\n` +
