@@ -17,7 +17,7 @@
 
 import "dotenv/config";
 import { execSync }          from "child_process";
-import { Contract, Interface, MaxUint256, Wallet, JsonRpcProvider } from "ethers";
+import { Contract, Interface, MaxUint256, Network, Wallet, JsonRpcProvider } from "ethers";
 
 // ─── ANSI colours ─────────────────────────────────────────────────────────────
 const R = "\x1b[31m"; const G = "\x1b[32m"; const Y = "\x1b[33m";
@@ -82,10 +82,10 @@ async function main() {
   const pk = PK_RAW.startsWith("0x") ? PK_RAW : `0x${PK_RAW}`;
 
   // ── Conectar ──────────────────────────────────────────────────────────────
-  // staticNetwork: true evita eth_chainId no startup (falha com RPCs que
-  // redirecionam /  retornam landing page antes de aceitar conexão)
-  const POLYGON_NETWORK = { chainId: 137n, name: "matic" };
-  const provider = new JsonRpcProvider(RPC_URL, POLYGON_NETWORK, { staticNetwork: true });
+  // Network.from(137) cria o objeto Network correto para o ethers v6;
+  // staticNetwork evita eth_chainId no startup (evita falha com RPCs lentos)
+  const POLYGON_NETWORK = Network.from(137);
+  const provider = new JsonRpcProvider(RPC_URL, POLYGON_NETWORK, { staticNetwork: POLYGON_NETWORK });
   const signer   = new Wallet(pk, provider);
 
   const chainId = 137n;
