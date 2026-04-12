@@ -71,10 +71,12 @@ async function runSmokeTest() {
   }
 
   // ── Helper: request autenticado L2 ──────────────────────────────────────
-  async function l2get(endpoint) {
+  // O HMAC é calculado sobre o PATH sem query string (spec do SDK).
+  async function l2get(path, query = "") {
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const signature = buildHmacSignature(SECRET, timestamp, "GET", endpoint);
-    const res = await fetch(`${CLOB_HOST}${endpoint}`, {
+    const signature = buildHmacSignature(SECRET, timestamp, "GET", path);
+    const url = `${CLOB_HOST}${path}${query ? "?" + query : ""}`;
+    const res = await fetch(url, {
       method: "GET",
       headers: {
         "Content-Type":    "application/json",
@@ -91,7 +93,7 @@ async function runSmokeTest() {
 
   // ── [1] Validar auth ──────────────────────────────────────────────────────
   try {
-    const { status, ok, body } = await l2get("/auth/api-keys");
+    const { status, ok, body } = await l2get("/auth/api-keys", "");
 
     if (!ok) {
       if (status === 401) {
@@ -120,7 +122,10 @@ async function runSmokeTest() {
   let balance = "N/A";
   let allowance = "N/A";
   try {
-    const { ok, status, body } = await l2get("/balance-allowance?asset_type=COLLATERAL");
+    const { ok, status, body } = await l2get(
+      "/balance-allowance",
+      "asset_type=COLLATERAL&signature_type=0"
+    );
     if (ok) {
       // O servidor retorna o saldo como float string (ex: "17.5"), não em wei
       const raw = parseFloat(body.balance ?? "0");
