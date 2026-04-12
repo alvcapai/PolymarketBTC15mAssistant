@@ -125,57 +125,106 @@ async function run() {
     };
   }
 
-  // ── [2] Criar ou recuperar User API key via L1 ─────────────────────────────
+  // ── Helper: tenta criar, deletar (L1) e recriar a key ────────────────────
+  async function tryCreate() {
+    const headers = await buildL1Headers();
+    const res     = await fetch(`${CLOB_HOST}/auth/api-key`, { method: "POST", headers });
+    const body    = await res.json().catch(() => ({}));
+    return { status: res.status, ok: res.ok, body };
+  }
+
+  async function tryDelete() {
+    // O SDK usa L2 para delete, mas tentamos L1 — o servidor pode aceitar.
+    const headers = await buildL1Headers();
+    const res     = await fetch(`${CLOB_HOST}/auth/api-key`, { method: "DELETE", headers });
+    const body    = await res.json().catch(() => ({}));
+    return { status: res.status, ok: res.ok, body };
+  }
+
+  async function tryDerive() {
+    const headers = await buildL1Headers();
+    const res     = await fetch(`${CLOB_HOST}/auth/derive-api-key`, { method: "GET", headers });
+    const body    = await res.json().catch(() => ({}));
+    return { status: res.status, ok: res.ok, body };
+  }
+
+  function extractCreds(body, label) {
+    const key        = body.apiKey ?? body.key;
+    const secret     = body.secret;
+    const passphrase = body.passphrase;
+    if (!key || !secret || !passphrase) {
+      throw new Error(`Resposta incompleta (${label}): ${JSON.stringify(body)}`);
+    }
+    return { key, secret, passphrase };
+  }
+
+  // ── [2] Criar ou forçar rotação da User API key ───────────────────────────
   let creds;
   try {
     console.log(`${Y}  [2/4] Tentando criar User API key (POST /auth/api-key)…${X}`);
+    const create1 = await tryCreate();
 
-    const headers  = await buildL1Headers();
-    const resCreate = await fetch(`${CLOB_HOST}/auth/api-key`, { method: "POST", headers });
-    const bodyCreate = await resCreate.json().catch(() => ({}));
-
-    if (resCreate.ok) {
-      // Criação bem-sucedida
-      const key        = bodyCreate.apiKey ?? bodyCreate.key;
-      const secret     = bodyCreate.secret;
-      const passphrase = bodyCreate.passphrase;
-      if (!key || !secret || !passphrase) {
-        throw new Error(`Resposta incompleta na criação: ${JSON.stringify(bodyCreate)}`);
-      }
-      creds = { key, secret, passphrase };
+    if (create1.ok) {
+      creds = extractCreds(create1.body, "create");
       console.log(`${Y}        Key criada (nova): ${creds.key}${X}`);
 
-    } else if (resCreate.status === 400) {
-      // 400 = key já existe — recupera via GET /auth/derive-api-key
-      console.log(`${Y}        Key já existe (400). Recuperando via GET /auth/derive-api-key…${X}`);
+    } else if (create1.status === 400) {
+      // Key existente — deriva para ver se ainda é válida após validação
+      console.log(`${Y}        Key já existe (400). Derivando via GET /auth/derive-api-key…${X}`);
+      const derive1 = await tryDerive();
 
-      const headersDerive = await buildL1Headers();
-      const resDerive     = await fetch(`${CLOB_HOST}/auth/derive-api-key`, {
-        method:  "GET",
-        headers: headersDerive,
-      });
-      const bodyDerive = await resDerive.json().catch(() => ({}));
-
-      if (!resDerive.ok) {
+      if (!derive1.ok) {
         throw Object.assign(
-          new Error(bodyDerive?.error ?? `HTTP ${resDerive.status} ao derivar key`),
-          { status: resDerive.status, body: bodyDerive }
+          new Error(derive1.body?.error ?? `HTTP ${derive1.status} ao derivar`),
+          { status: derive1.status }
         );
       }
 
-      const key        = bodyDerive.apiKey ?? bodyDerive.key;
-      const secret     = bodyDerive.secret;
-      const passphrase = bodyDerive.passphrase;
-      if (!key || !secret || !passphrase) {
-        throw new Error(`Resposta incompleta na derivação: ${JSON.stringify(bodyDerive)}`);
+      const derivedCreds = extractCreds(derive1.body, "derive");
+      console.log(`${Y}        Key derivada: ${derivedCreds.key} — testando validade…${X}`);
+
+      // Testa se a key derivada é válida para L2 auth
+      const ts  = Math.floor(Date.now() / 1000).toString();
+      const sig = buildHmacSignature(derivedCreds.secret, ts, "GET", "/auth/api-keys");
+      const testRes = await fetch(`${CLOB_HOST}/auth/api-keys`, {
+        method: "GET",
+        headers: {
+          "POLY_ADDRESS":    wallet.address,
+          "POLY_API_KEY":    derivedCreds.key,
+          "POLY_PASSPHRASE": derivedCreds.passphrase,
+          "POLY_TIMESTAMP":  ts,
+          "POLY_SIGNATURE":  sig,
+        },
+      });
+
+      if (testRes.ok) {
+        // Key derivada ainda é válida
+        creds = derivedCreds;
+        console.log(`${Y}        Key derivada é válida.${X}`);
+      } else {
+        // Key expirada/inválida — tenta deletar (L1) e recriar
+        console.log(`${Y}        Key derivada inválida (${testRes.status}). Tentando deletar e recriar…${X}`);
+        const del = await tryDelete();
+        console.log(`${Y}        DELETE /auth/api-key → HTTP ${del.status} ${JSON.stringify(del.body)}${X}`);
+
+        const create2 = await tryCreate();
+        if (!create2.ok) {
+          throw Object.assign(
+            new Error(
+              `Falha ao recriar após delete. POST → HTTP ${create2.status}: ` +
+              (create2.body?.error ?? JSON.stringify(create2.body))
+            ),
+            { status: create2.status }
+          );
+        }
+        creds = extractCreds(create2.body, "recreate");
+        console.log(`${Y}        Key recriada: ${creds.key}${X}`);
       }
-      creds = { key, secret, passphrase };
-      console.log(`${Y}        Key recuperada do servidor: ${creds.key}${X}`);
 
     } else {
       throw Object.assign(
-        new Error(bodyCreate?.error ?? `HTTP ${resCreate.status} ${resCreate.statusText}`),
-        { status: resCreate.status }
+        new Error(create1.body?.error ?? `HTTP ${create1.status}`),
+        { status: create1.status }
       );
     }
   } catch (err) {
@@ -186,8 +235,7 @@ async function run() {
       `${R}${B}║  [FALHA] Não foi possível criar/recuperar a User API key.  ║${X}\n` +
       `${R}${B}╚══════════════════════════════════════════════════════════╝${X}\n` +
       `${R}  • HTTP ${status}: ${msg}${X}\n` +
-      `${R}  • Certifique-se que a carteira ${wallet.address}${X}\n` +
-      `${R}    tem conta ativa na Polymarket e USDC depositado.${X}\n`
+      `${R}  • Carteira: ${wallet.address}${X}\n`
     );
     process.exit(1);
   }
