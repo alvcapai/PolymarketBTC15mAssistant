@@ -24,7 +24,8 @@ const R = "\x1b[31m"; const G = "\x1b[32m"; const Y = "\x1b[33m";
 const C = "\x1b[36m"; const B = "\x1b[1m";  const X = "\x1b[0m";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-const RPC_URL       = process.env.POLYGON_RPC_URL          || "https://polygon-rpc.com";
+// https://polygon-rpc.com é uma landing page — usar endpoint real como fallback
+const RPC_URL       = process.env.POLYGON_RPC_URL          || "https://rpc.ankr.com/polygon";
 const PK_RAW        = String(process.env.PK                        ?? "").trim();
 const PROXY_ADDRESS = String(process.env.POLYMARKET_PROXY_ADDRESS  ?? "").trim();
 const SIG_TYPE      = String(process.env.POLYMARKET_SIGNATURE_TYPE ?? "2").trim();
@@ -81,11 +82,15 @@ async function main() {
   const pk = PK_RAW.startsWith("0x") ? PK_RAW : `0x${PK_RAW}`;
 
   // ── Conectar ──────────────────────────────────────────────────────────────
-  const provider = new JsonRpcProvider(RPC_URL);
+  // staticNetwork: true evita eth_chainId no startup (falha com RPCs que
+  // redirecionam /  retornam landing page antes de aceitar conexão)
+  const POLYGON_NETWORK = { chainId: 137n, name: "matic" };
+  const provider = new JsonRpcProvider(RPC_URL, POLYGON_NETWORK, { staticNetwork: true });
   const signer   = new Wallet(pk, provider);
 
-  const { chainId } = await provider.getNetwork();
-  console.log(`${C}  • Chain ID   : ${chainId}${X}`);
+  const chainId = 137n;
+  console.log(`${C}  • RPC        : ${RPC_URL}${X}`);
+  console.log(`${C}  • Chain ID   : ${chainId} (Polygon mainnet)${X}`);
   console.log(`${C}  • EOA signer : ${signer.address}${X}`);
 
   // ── Detectar modo: EOA direto (sig type 0/1) vs Gnosis Safe (sig type 2) ─
