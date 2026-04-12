@@ -61,28 +61,37 @@ try {
 }
 
 // ─── Authenticated probe ──────────────────────────────────────────────────────
-// getOpenOrders() exige assinatura L2 completa (API key + secret + passphrase).
-// Retorna array vazio [] se não houver ordens — isso ainda é um 200 OK válido.
+// getApiKeys() → GET /auth/api-keys: o probe de auth mais direto do SDK.
+// Retorna as API keys da conta se autenticado → 401 se as credenciais forem inválidas.
 
 async function runSmokeTest() {
   try {
-    const result = await clobClient.getOpenOrders();
+    const result = await clobClient.getApiKeys();
 
     // Se chegou até aqui, a autenticação L2 foi aceita pelo servidor.
-    const orderCount = Array.isArray(result) ? result.length : "?";
+    const keyCount = Array.isArray(result) ? result.length : "?";
     console.log(
       `${G}${B}╔══════════════════════════════════════════════════════════╗${X}\n` +
       `${G}${B}║  [SUCESSO] Chaves validadas e conexão L2 perfeita!       ║${X}\n` +
       `${G}${B}╚══════════════════════════════════════════════════════════╝${X}\n` +
-      `${G}  • Endpoint : ${CLOB_HOST}${X}\n` +
-      `${G}  • API Key  : ${API_KEY.slice(0, 8)}…${X}\n` +
-      `${G}  • Ordens abertas encontradas: ${orderCount}${X}\n`
+      `${G}  • Endpoint  : ${CLOB_HOST}${X}\n` +
+      `${G}  • API Key   : ${API_KEY.slice(0, 8)}…${X}\n` +
+      `${G}  • API keys na conta: ${keyCount}${X}\n`
     );
   } catch (err) {
+    // O SDK v2.x pode lançar um TypeError interno ao parsear respostas vazias.
+    // Inspecionamos tanto err.status quanto err.cause?.status para cobrir ambos os casos.
     const message    = err?.message ?? String(err);
-    const statusCode = err?.status ?? err?.statusCode ?? err?.response?.status ?? null;
-    const is401      = statusCode === 401
+    const statusCode = err?.status
+      ?? err?.statusCode
+      ?? err?.cause?.status
+      ?? err?.response?.status
+      ?? null;
+
+    const rawStr  = JSON.stringify(err) ?? "";
+    const is401   = statusCode === 401
       || message.includes("401")
+      || rawStr.includes("401")
       || message.toLowerCase().includes("unauthorized")
       || message.toLowerCase().includes("not authorized");
 
@@ -103,6 +112,7 @@ async function runSmokeTest() {
         `\n${R}${B}[ERRO INESPERADO] Falha na requisição autenticada.${X}\n` +
         `${R}  • Status : ${statusCode ?? "N/A"}${X}\n` +
         `${R}  • Detalhe: ${message}${X}\n` +
+        `${R}  • Raw   : ${rawStr}${X}\n` +
         `${R}  Isso pode indicar problema de rede, RPC ou endpoint fora do ar.${X}\n`
       );
     }
