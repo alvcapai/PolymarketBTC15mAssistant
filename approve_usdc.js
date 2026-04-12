@@ -24,8 +24,8 @@ const R = "\x1b[31m"; const G = "\x1b[32m"; const Y = "\x1b[33m";
 const C = "\x1b[36m"; const B = "\x1b[1m";  const X = "\x1b[0m";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-// https://polygon-rpc.com é uma landing page — usar endpoint real como fallback
-const RPC_URL       = process.env.POLYGON_RPC_URL          || "https://rpc.ankr.com/polygon";
+// Fallback: PublicNode — gratuito, sem API key, sem rate-limit agressivo
+const RPC_URL       = process.env.POLYGON_RPC_URL          || "https://polygon-bor-rpc.publicnode.com";
 const PK_RAW        = String(process.env.PK                        ?? "").trim();
 const PROXY_ADDRESS = String(process.env.POLYMARKET_PROXY_ADDRESS  ?? "").trim();
 const SIG_TYPE      = String(process.env.POLYMARKET_SIGNATURE_TYPE ?? "2").trim();

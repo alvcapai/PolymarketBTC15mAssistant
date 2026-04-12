@@ -21,7 +21,7 @@ const X = "\x1b[0m";
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const CLOB_HOST  = process.env.POLYMARKET_CLOB_HOST    || "https://clob.polymarket.com";
-const RPC_URL    = process.env.POLYGON_RPC_URL          || "https://rpc.ankr.com/polygon";
+const RPC_URL    = process.env.POLYGON_RPC_URL          || "https://polygon-bor-rpc.publicnode.com";
 const PK         = String(process.env.PK                        ?? "").trim();
 const API_KEY    = String(process.env.POLYMARKET_API_KEY        ?? "").trim();
 const SECRET     = String(process.env.POLYMARKET_API_SECRET     ?? "").trim();

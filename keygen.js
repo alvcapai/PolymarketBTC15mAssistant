@@ -26,7 +26,7 @@ const X = "\x1b[0m";
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const CLOB_HOST = process.env.POLYMARKET_CLOB_HOST || "https://clob.polymarket.com";
-const RPC_URL   = process.env.POLYGON_RPC_URL       || "https://rpc.ankr.com/polygon";
+const RPC_URL   = process.env.POLYGON_RPC_URL       || "https://polygon-bor-rpc.publicnode.com";
 const CHAIN_ID  = 137; // Polygon mainnet
 const ENV_PATH  = resolve(process.cwd(), ".env");
 
