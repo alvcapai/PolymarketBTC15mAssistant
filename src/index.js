@@ -727,8 +727,8 @@ async function main() {
       // AUTO-TRADE: dispara no maximo uma ordem por marketSlug quando a confianca entra em zona extrema.
       const pLongPct = Number.isFinite(Number(pLong)) ? Number(pLong) * 100 : null;
       const pShortPct = Number.isFinite(Number(pShort)) ? Number(pShort) * 100 : null;
-      const extremeLong = pLongPct !== null && pLongPct >= 90;
-      const extremeShort = pShortPct !== null && pShortPct >= 90;
+      const extremeLong = pLongPct !== null && pLongPct >= 75;
+      const extremeShort = pShortPct !== null && pShortPct >= 75;
       const canTradeThisMarket = poly.ok && marketSlug && !tradedMarketSlugs.has(marketSlug);
 
       if (canTradeThisMarket && (extremeLong || extremeShort)) {
