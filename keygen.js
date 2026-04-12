@@ -106,9 +106,8 @@ async function run() {
   }
 
   // ── Helper: assina EIP-712 e monta headers L1 ─────────────────────────────
-  async function buildL1Headers() {
+  async function buildL1Headers(nonce = 0) {
     const ts        = Math.floor(Date.now() / 1000).toString();
-    const nonce     = 0;
     const value     = {
       address:   wallet.address,
       timestamp: ts,
@@ -126,23 +125,23 @@ async function run() {
   }
 
   // ── Helper: tenta criar, deletar (L1) e recriar a key ────────────────────
-  async function tryCreate() {
-    const headers = await buildL1Headers();
+  async function tryCreate(nonce = 0) {
+    const headers = await buildL1Headers(nonce);
     const res     = await fetch(`${CLOB_HOST}/auth/api-key`, { method: "POST", headers });
     const body    = await res.json().catch(() => ({}));
     return { status: res.status, ok: res.ok, body };
   }
 
-  async function tryDelete() {
+  async function tryDelete(nonce = 0) {
     // O SDK usa L2 para delete, mas tentamos L1 — o servidor pode aceitar.
-    const headers = await buildL1Headers();
+    const headers = await buildL1Headers(nonce);
     const res     = await fetch(`${CLOB_HOST}/auth/api-key`, { method: "DELETE", headers });
     const body    = await res.json().catch(() => ({}));
     return { status: res.status, ok: res.ok, body };
   }
 
-  async function tryDerive() {
-    const headers = await buildL1Headers();
+  async function tryDerive(nonce = 0) {
+    const headers = await buildL1Headers(nonce);
     const res     = await fetch(`${CLOB_HOST}/auth/derive-api-key`, { method: "GET", headers });
     const body    = await res.json().catch(() => ({}));
     return { status: res.status, ok: res.ok, body };
@@ -158,84 +157,76 @@ async function run() {
     return { key, secret, passphrase };
   }
 
-  // ── [2] Criar ou forçar rotação da User API key ───────────────────────────
+  // ── Helper: testa credenciais L2 em memória ──────────────────────────────
+  async function testCreds(c) {
+    const ts  = Math.floor(Date.now() / 1000).toString();
+    const sig = buildHmacSignature(c.secret, ts, "GET", "/auth/api-keys");
+    const res = await fetch(`${CLOB_HOST}/auth/api-keys`, {
+      method: "GET",
+      headers: {
+        "POLY_ADDRESS":    wallet.address,
+        "POLY_API_KEY":    c.key,
+        "POLY_PASSPHRASE": c.passphrase,
+        "POLY_TIMESTAMP":  ts,
+        "POLY_SIGNATURE":  sig,
+      },
+    });
+    return res.ok;
+  }
+
+  // ── [2] Criar ou derivar User API key (tenta nonces 0‥4) ─────────────────
   let creds;
   try {
-    console.log(`${Y}  [2/4] Tentando criar User API key (POST /auth/api-key)…${X}`);
-    const create1 = await tryCreate();
+    console.log(`${Y}  [2/4] Criando/derivando User API key…${X}`);
 
-    if (create1.ok) {
-      creds = extractCreds(create1.body, "create");
-      console.log(`${Y}        Key criada (nova): ${creds.key}${X}`);
-
-    } else if (create1.status === 400) {
-      // Key existente — deriva para ver se ainda é válida após validação
-      console.log(`${Y}        Key já existe (400). Derivando via GET /auth/derive-api-key…${X}`);
-      const derive1 = await tryDerive();
-
-      if (!derive1.ok) {
-        throw Object.assign(
-          new Error(derive1.body?.error ?? `HTTP ${derive1.status} ao derivar`),
-          { status: derive1.status }
-        );
+    // Passo A: tenta criar com nonces crescentes
+    for (let nonce = 0; nonce <= 4; nonce++) {
+      const r = await tryCreate(nonce);
+      if (r.ok) {
+        const c = extractCreds(r.body, `create nonce=${nonce}`);
+        console.log(`${Y}        Criada (nonce=${nonce}): ${c.key}${X}`);
+        creds = c;
+        break;
       }
+      console.log(`${Y}        POST nonce=${nonce} → ${r.status} (${r.body?.error ?? "sem detalhe"})${X}`);
+    }
 
-      const derivedCreds = extractCreds(derive1.body, "derive");
-      console.log(`${Y}        Key derivada: ${derivedCreds.key} — testando validade…${X}`);
-
-      // Testa se a key derivada é válida para L2 auth
-      const ts  = Math.floor(Date.now() / 1000).toString();
-      const sig = buildHmacSignature(derivedCreds.secret, ts, "GET", "/auth/api-keys");
-      const testRes = await fetch(`${CLOB_HOST}/auth/api-keys`, {
-        method: "GET",
-        headers: {
-          "POLY_ADDRESS":    wallet.address,
-          "POLY_API_KEY":    derivedCreds.key,
-          "POLY_PASSPHRASE": derivedCreds.passphrase,
-          "POLY_TIMESTAMP":  ts,
-          "POLY_SIGNATURE":  sig,
-        },
-      });
-
-      if (testRes.ok) {
-        // Key derivada ainda é válida
-        creds = derivedCreds;
-        console.log(`${Y}        Key derivada é válida.${X}`);
-      } else {
-        // Key expirada/inválida — tenta deletar (L1) e recriar
-        console.log(`${Y}        Key derivada inválida (${testRes.status}). Tentando deletar e recriar…${X}`);
-        const del = await tryDelete();
-        console.log(`${Y}        DELETE /auth/api-key → HTTP ${del.status} ${JSON.stringify(del.body)}${X}`);
-
-        const create2 = await tryCreate();
-        if (!create2.ok) {
-          throw Object.assign(
-            new Error(
-              `Falha ao recriar após delete. POST → HTTP ${create2.status}: ` +
-              (create2.body?.error ?? JSON.stringify(create2.body))
-            ),
-            { status: create2.status }
-          );
+    // Passo B: se criação falhou, deriva e testa cada nonce
+    if (!creds) {
+      console.log(`${Y}        Criação bloqueada — derivando por nonce…${X}`);
+      for (let nonce = 0; nonce <= 4; nonce++) {
+        const r = await tryDerive(nonce);
+        if (!r.ok) {
+          console.log(`${Y}        DERIVE nonce=${nonce} → ${r.status}${X}`);
+          continue;
         }
-        creds = extractCreds(create2.body, "recreate");
-        console.log(`${Y}        Key recriada: ${creds.key}${X}`);
+        const c = extractCreds(r.body, `derive nonce=${nonce}`);
+        console.log(`${Y}        Derivada nonce=${nonce}: ${c.key} — testando…${X}`);
+        if (await testCreds(c)) {
+          creds = c;
+          console.log(`${Y}        Válida! ✓${X}`);
+          break;
+        }
+        console.log(`${Y}        Inválida para L2, tentando próximo nonce…${X}`);
       }
+    }
 
-    } else {
-      throw Object.assign(
-        new Error(create1.body?.error ?? `HTTP ${create1.status}`),
-        { status: create1.status }
+    if (!creds) {
+      throw new Error(
+        "Nenhum nonce (0‥4) produziu credenciais válidas.\n" +
+        "  Possíveis causas:\n" +
+        "  1. A carteira não tem permissão para CLOB API (conta sem atividade)\n" +
+        "  2. A assinatura EIP-712 está incorreta para este servidor\n" +
+        "  3. Entre em contato com o suporte da Polymarket para resetar as API keys"
       );
     }
   } catch (err) {
-    const msg    = err?.message ?? String(err);
-    const status = err?.status  ?? "N/A";
+    const msg = err?.message ?? String(err);
     console.error(
       `\n${R}${B}╔══════════════════════════════════════════════════════════╗${X}\n` +
       `${R}${B}║  [FALHA] Não foi possível criar/recuperar a User API key.  ║${X}\n` +
       `${R}${B}╚══════════════════════════════════════════════════════════╝${X}\n` +
-      `${R}  • HTTP ${status}: ${msg}${X}\n` +
-      `${R}  • Carteira: ${wallet.address}${X}\n`
+      `${R}${msg}${X}\n`
     );
     process.exit(1);
   }
