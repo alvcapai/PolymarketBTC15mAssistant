@@ -57,6 +57,12 @@ function buildHmacSignature(secret, timestamp, method, path, body = "") {
     .replace(/\+/g, "-").replace(/\//g, "_");
 }
 
+function formatUsdc(rawValue) {
+  const raw = Number(rawValue ?? 0);
+  if (!Number.isFinite(raw)) return String(rawValue);
+  return `$${(raw / 1_000_000).toFixed(2)} USDC`;
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function runSmokeTest() {
@@ -149,11 +155,8 @@ async function runSmokeTest() {
     const body = await res.json().catch(() => ({}));
     const { ok, status } = res;
     if (ok) {
-      // O servidor retorna o saldo como float string (ex: "17.5"), não em wei
-      const raw = parseFloat(body.balance ?? "0");
-      balance   = isNaN(raw) ? String(body.balance) : `$${raw.toFixed(2)} USDC`;
-      const alw = parseFloat(body.allowance ?? "0");
-      allowance = isNaN(alw) ? String(body.allowance) : `$${alw.toFixed(2)} USDC`;
+      balance   = formatUsdc(body.balance);
+      allowance = formatUsdc(body.allowance);
     } else {
       balance   = `ERRO ${status}: ${JSON.stringify(body)}`;
       allowance = "—";
