@@ -181,7 +181,7 @@ async function runSmokeTest() {
       const list = body.data ?? (Array.isArray(body) ? body : []);
       const btc  = list.filter(m => {
         const q = (m.question ?? "").toLowerCase();
-        return q.includes("bitcoin") || q.includes(" btc");
+        return q.includes("bitcoin") || q.includes("btc");
       });
 
       for (const market of btc) {
@@ -212,7 +212,9 @@ async function runSmokeTest() {
 
   // ── Resultado final ───────────────────────────────────────────────────────
   const allowanceRaw  = Number((allowance.match(/\$([\d.]+)/) ?? [])[1] ?? -1);
-  const allowanceOk   = allowanceRaw > 0;
+  // Para proxy wallets (sig type 2), o CLOB gerencia fundos via contrato proxy —
+  // o endpoint pode retornar $0.00 mesmo com fundos disponíveis. Não bloquear.
+  const allowanceOk   = allowanceRaw > 0 || SIGNATURE_TYPE === "2";
   const balanceRaw    = Number((balance.match(/\$([\d.]+)/) ?? [])[1] ?? 0);
   const readyToBet    = allowanceOk && balanceRaw > 0 && orderStatus.startsWith("OK");
 
@@ -238,8 +240,8 @@ async function runSmokeTest() {
   } else {
     console.log(`\n${Y}${B}  Pendências antes de apostar:${X}`);
     if (balanceRaw <= 0)  console.log(`${R}  ✘  Saldo USDC zerado — deposite USDC na Polymarket.${X}`);
-    if (!allowanceOk)     console.log(`${R}  ✘  Allowance zerada — acesse polymarket.com e faça um depósito${X}\n` +
-                                      `${R}     para acionar o approve do contrato USDC.${X}`);
+    if (!allowanceOk)     console.log(`${R}  ✘  Allowance zerada (sig type ${SIGNATURE_TYPE}) — acesse polymarket.com e faça um${X}\n` +
+                                      `${R}     depósito para acionar o approve do contrato USDC.${X}`);
     if (!orderStatus.startsWith("OK")) console.log(`${R}  ✘  Mercado/preço indisponível: ${orderStatus}${X}`);
     console.log();
   }
