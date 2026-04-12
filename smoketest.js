@@ -69,14 +69,12 @@ async function runSmokeTest() {
     process.exit(1);
   }
 
-  const endpoint  = "/auth/api-keys";
-  const method    = "GET";
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signature = buildHmacSignature(SECRET, timestamp, method, endpoint);
-
-  try {
-    const res  = await fetch(`${CLOB_HOST}${endpoint}`, {
-      method,
+  // ── Helper: request autenticado L2 ──────────────────────────────────────
+  async function l2get(endpoint) {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = buildHmacSignature(SECRET, timestamp, "GET", endpoint);
+    const res = await fetch(`${CLOB_HOST}${endpoint}`, {
+      method: "GET",
       headers: {
         "Content-Type":    "application/json",
         "POLY_ADDRESS":    walletAddress,
@@ -87,44 +85,61 @@ async function runSmokeTest() {
       },
     });
     const body = await res.json().catch(() => ({}));
+    return { status: res.status, ok: res.ok, body };
+  }
 
-    if (res.ok) {
-      const keyCount = Array.isArray(body) ? body.length : "?";
-      console.log(
-        `${G}${B}╔══════════════════════════════════════════════════════════╗${X}\n` +
-        `${G}${B}║  [SUCESSO] Chaves validadas e conexão L2 perfeita!       ║${X}\n` +
-        `${G}${B}╚══════════════════════════════════════════════════════════╝${X}\n` +
-        `${G}  • Endpoint          : ${CLOB_HOST}${X}\n` +
-        `${G}  • Wallet            : ${walletAddress}${X}\n` +
-        `${G}  • POLYMARKET_API_KEY: ${API_KEY}${X}\n` +
-        `${G}  • API keys na conta : ${keyCount}${X}\n`
-      );
-    } else if (res.status === 401) {
-      console.error(
-        `\n${R}${B}╔══════════════════════════════════════════════════════════════════╗${X}\n` +
-        `${R}${B}║  [FALHA FATAL] A API da Polymarket rejeitou as chaves fornecidas. ║${X}\n` +
-        `${R}${B}║               Chave Inválida.                                     ║${X}\n` +
-        `${R}${B}╚══════════════════════════════════════════════════════════════════╝${X}\n` +
-        `${R}  • HTTP Status          : 401 Unauthorized${X}\n` +
-        `${R}  • POLYMARKET_API_KEY   : ${API_KEY}${X}\n` +
-        `${R}  • Wallet               : ${walletAddress}${X}\n` +
-        `${R}  • Resposta do servidor : ${JSON.stringify(body)}${X}\n\n` +
-        `${Y}  Execute node keygen.js para gerar novas User API keys.${X}\n`
-      );
-      process.exit(1);
-    } else {
-      console.error(
-        `\n${R}${B}[ERRO ${res.status}] Resposta inesperada:${X}\n` +
-        `${R}  ${JSON.stringify(body)}${X}\n`
-      );
+  // ── [1] Validar auth ──────────────────────────────────────────────────────
+  try {
+    const { status, ok, body } = await l2get("/auth/api-keys");
+
+    if (!ok) {
+      if (status === 401) {
+        console.error(
+          `\n${R}${B}╔══════════════════════════════════════════════════════════════════╗${X}\n` +
+          `${R}${B}║  [FALHA FATAL] A API da Polymarket rejeitou as chaves fornecidas. ║${X}\n` +
+          `${R}${B}║               Chave Inválida.                                     ║${X}\n` +
+          `${R}${B}╚══════════════════════════════════════════════════════════════════╝${X}\n` +
+          `${R}  • HTTP Status          : 401 Unauthorized${X}\n` +
+          `${R}  • POLYMARKET_API_KEY   : ${API_KEY}${X}\n` +
+          `${R}  • Wallet               : ${walletAddress}${X}\n` +
+          `${R}  • Resposta do servidor : ${JSON.stringify(body)}${X}\n\n` +
+          `${Y}  Execute node keygen.js para gerar novas User API keys.${X}\n`
+        );
+      } else {
+        console.error(`\n${R}${B}[ERRO ${status}] ${JSON.stringify(body)}${X}\n`);
+      }
       process.exit(1);
     }
   } catch (err) {
-    console.error(
-      `\n${R}${B}[ERRO DE REDE] ${err?.message ?? String(err)}${X}\n`
-    );
+    console.error(`\n${R}${B}[ERRO DE REDE] ${err?.message ?? String(err)}${X}\n`);
     process.exit(1);
   }
+
+  // ── [2] Buscar saldo USDC (COLLATERAL) ───────────────────────────────────
+  let balance = "N/A";
+  let allowance = "N/A";
+  try {
+    const { ok, body } = await l2get("/balance-allowance?asset_type=COLLATERAL");
+    if (ok) {
+      // Saldo em wei (6 casas decimais para USDC)
+      const raw = parseFloat(body.balance ?? "0");
+      balance   = isNaN(raw) ? body.balance : `$${(raw / 1e6).toFixed(2)} USDC`;
+      const alw = parseFloat(body.allowance ?? "0");
+      allowance = isNaN(alw) ? body.allowance : `$${(alw / 1e6).toFixed(2)} USDC`;
+    }
+  } catch (_) { /* não bloqueia o sucesso do smoketest */ }
+
+  // ── Resultado ────────────────────────────────────────────────────────────
+  console.log(
+    `${G}${B}╔══════════════════════════════════════════════════════════╗${X}\n` +
+    `${G}${B}║  [SUCESSO] Chaves validadas e conexão L2 perfeita!       ║${X}\n` +
+    `${G}${B}╚══════════════════════════════════════════════════════════╝${X}\n` +
+    `${G}  • Endpoint          : ${CLOB_HOST}${X}\n` +
+    `${G}  • Wallet            : ${walletAddress}${X}\n` +
+    `${G}  • POLYMARKET_API_KEY: ${API_KEY}${X}\n` +
+    `${G}  • Saldo USDC        : ${balance}${X}\n` +
+    `${G}  • Allowance USDC    : ${allowance}${X}\n`
+  );
 }
 
 runSmokeTest();
