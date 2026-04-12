@@ -105,11 +105,8 @@ async function run() {
     process.exit(1);
   }
 
-  // ── [2] Assinar EIP-712 com ethers v6 e criar API key via L1 ──────────────
-  let creds;
-  try {
-    console.log(`${Y}  [2/4] Assinando EIP-712 (ethers v6) e criando User API key…${X}`);
-
+  // ── Helper: assina EIP-712 e monta headers L1 ─────────────────────────────
+  async function buildL1Headers() {
     const ts        = Math.floor(Date.now() / 1000).toString();
     const nonce     = 0;
     const value     = {
@@ -118,47 +115,75 @@ async function run() {
       nonce,
       message:   MSG_TO_SIGN,
     };
-
-    // Usa signTypedData do ethers v6 DIRETAMENTE — sem SDK, sem shim
     const signature = await wallet.signTypedData(EIP712_DOMAIN, EIP712_TYPES, value);
-
-    const headers = {
+    return {
       "Content-Type":   "application/json",
       "POLY_ADDRESS":   wallet.address,
       "POLY_SIGNATURE": signature,
       "POLY_TIMESTAMP": ts,
       "POLY_NONCE":     String(nonce),
     };
+  }
 
-    const res  = await fetch(`${CLOB_HOST}/auth/api-key`, { method: "POST", headers });
-    const body = await res.json().catch(() => ({}));
+  // ── [2] Criar ou recuperar User API key via L1 ─────────────────────────────
+  let creds;
+  try {
+    console.log(`${Y}  [2/4] Tentando criar User API key (POST /auth/api-key)…${X}`);
 
-    if (!res.ok) {
+    const headers  = await buildL1Headers();
+    const resCreate = await fetch(`${CLOB_HOST}/auth/api-key`, { method: "POST", headers });
+    const bodyCreate = await resCreate.json().catch(() => ({}));
+
+    if (resCreate.ok) {
+      // Criação bem-sucedida
+      const key        = bodyCreate.apiKey ?? bodyCreate.key;
+      const secret     = bodyCreate.secret;
+      const passphrase = bodyCreate.passphrase;
+      if (!key || !secret || !passphrase) {
+        throw new Error(`Resposta incompleta na criação: ${JSON.stringify(bodyCreate)}`);
+      }
+      creds = { key, secret, passphrase };
+      console.log(`${Y}        Key criada (nova): ${creds.key}${X}`);
+
+    } else if (resCreate.status === 400) {
+      // 400 = key já existe — recupera via GET /auth/derive-api-key
+      console.log(`${Y}        Key já existe (400). Recuperando via GET /auth/derive-api-key…${X}`);
+
+      const headersDerive = await buildL1Headers();
+      const resDerive     = await fetch(`${CLOB_HOST}/auth/derive-api-key`, {
+        method:  "GET",
+        headers: headersDerive,
+      });
+      const bodyDerive = await resDerive.json().catch(() => ({}));
+
+      if (!resDerive.ok) {
+        throw Object.assign(
+          new Error(bodyDerive?.error ?? `HTTP ${resDerive.status} ao derivar key`),
+          { status: resDerive.status, body: bodyDerive }
+        );
+      }
+
+      const key        = bodyDerive.apiKey ?? bodyDerive.key;
+      const secret     = bodyDerive.secret;
+      const passphrase = bodyDerive.passphrase;
+      if (!key || !secret || !passphrase) {
+        throw new Error(`Resposta incompleta na derivação: ${JSON.stringify(bodyDerive)}`);
+      }
+      creds = { key, secret, passphrase };
+      console.log(`${Y}        Key recuperada do servidor: ${creds.key}${X}`);
+
+    } else {
       throw Object.assign(
-        new Error(body?.error ?? `HTTP ${res.status} ${res.statusText}`),
-        { status: res.status, body }
+        new Error(bodyCreate?.error ?? `HTTP ${resCreate.status} ${resCreate.statusText}`),
+        { status: resCreate.status }
       );
     }
-
-    // Mapeia apiKey → key (formato do servidor)
-    const key        = body.apiKey    ?? body.key;
-    const secret     = body.secret;
-    const passphrase = body.passphrase;
-
-    if (!key || !secret || !passphrase) {
-      throw new Error(
-        `Resposta incompleta do servidor: ${JSON.stringify(body)}`
-      );
-    }
-
-    creds = { key, secret, passphrase };
-    console.log(`${Y}        Key criada: ${creds.key}${X}`);
   } catch (err) {
     const msg    = err?.message ?? String(err);
     const status = err?.status  ?? "N/A";
     console.error(
       `\n${R}${B}╔══════════════════════════════════════════════════════════╗${X}\n` +
-      `${R}${B}║  [FALHA] Não foi possível criar a User API key.           ║${X}\n` +
+      `${R}${B}║  [FALHA] Não foi possível criar/recuperar a User API key.  ║${X}\n` +
       `${R}${B}╚══════════════════════════════════════════════════════════╝${X}\n` +
       `${R}  • HTTP ${status}: ${msg}${X}\n` +
       `${R}  • Certifique-se que a carteira ${wallet.address}${X}\n` +
