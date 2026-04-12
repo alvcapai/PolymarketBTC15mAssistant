@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { CONFIG } from "./config.js";
 import { fetchKlines, fetchLastPrice } from "./data/binance.js";
 import { fetchChainlinkBtcUsd } from "./data/chainlink.js";
@@ -25,6 +26,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { applyGlobalProxyFromEnv } from "./net/proxy.js";
+import { executeTrade } from "./trade/executor.js";
 
 function countVwapCrosses(closes, vwapSeries, lookback) {
   if (closes.length < lookback || vwapSeries.length < lookback) return null;
@@ -209,6 +211,7 @@ function parsePriceToBeat(market) {
 }
 
 const dumpedMarkets = new Set();
+const tradedMarketSlugs = new Set();
 
 function safeFileSlug(x) {
   return String(x ?? "")
@@ -720,6 +723,37 @@ async function main() {
         edge.edgeDown,
         rec.action === "ENTER" ? `${rec.side}:${rec.phase}:${rec.strength}` : "NO_TRADE"
       ]);
+
+      // AUTO-TRADE: dispara no maximo uma ordem por marketSlug quando a confianca entra em zona extrema.
+      const pLongPct = Number.isFinite(Number(pLong)) ? Number(pLong) * 100 : null;
+      const pShortPct = Number.isFinite(Number(pShort)) ? Number(pShort) * 100 : null;
+      const extremeLong = pLongPct !== null && pLongPct >= 90;
+      const extremeShort = pShortPct !== null && pShortPct >= 90;
+      const canTradeThisMarket = poly.ok && marketSlug && !tradedMarketSlugs.has(marketSlug);
+
+      if (canTradeThisMarket && (extremeLong || extremeShort)) {
+        const targetTokenId = extremeLong ? poly.tokens.upTokenId : poly.tokens.downTokenId;
+        const targetPrice = extremeLong
+          ? (poly.orderbook.up.bestAsk ?? poly.prices.up)
+          : (poly.orderbook.down.bestAsk ?? poly.prices.down);
+        const targetProbability = extremeLong ? pLongPct : pShortPct;
+        const tradeSizeUsd = Number(process.env.TRADE_SIZE_USDC || "5");
+
+        if (targetTokenId && Number.isFinite(Number(targetPrice)) && Number(targetPrice) > 0 && Number.isFinite(tradeSizeUsd) && tradeSizeUsd > 0) {
+          try {
+            await executeTrade(
+              targetTokenId,
+              "BUY",
+              tradeSizeUsd,
+              Number(targetPrice),
+              Number(targetProbability)
+            );
+            tradedMarketSlugs.add(marketSlug);
+          } catch (tradeError) {
+            console.log(`Trade error: ${tradeError?.message ?? String(tradeError)}`);
+          }
+        }
+      }
     } catch (err) {
       console.log("────────────────────────────");
       console.log(`Error: ${err?.message ?? String(err)}`);
