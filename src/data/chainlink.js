@@ -86,7 +86,8 @@ async function fetchLatestRoundData(rpcUrl, aggregator) {
 }
 
 export async function fetchChainlinkBtcUsd() {
-  if ((!CONFIG.chainlink.polygonRpcUrl && (!CONFIG.chainlink.polygonRpcUrls || CONFIG.chainlink.polygonRpcUrls.length === 0)) || !CONFIG.chainlink.btcUsdAggregator) {
+  const aggregatorAddr = CONFIG.chainlink.assetUsdAggregator || CONFIG.chainlink.btcUsdAggregator;
+  if ((!CONFIG.chainlink.polygonRpcUrl && (!CONFIG.chainlink.polygonRpcUrls || CONFIG.chainlink.polygonRpcUrls.length === 0)) || !aggregatorAddr) {
     return { price: null, updatedAt: null, source: "missing_config" };
   }
 
@@ -98,7 +99,7 @@ export async function fetchChainlinkBtcUsd() {
   const rpcs = getOrderedRpcs();
   if (rpcs.length === 0) return { price: null, updatedAt: null, source: "missing_config" };
 
-  const aggregator = CONFIG.chainlink.btcUsdAggregator;
+  const aggregator = CONFIG.chainlink.assetUsdAggregator || CONFIG.chainlink.btcUsdAggregator;
 
   for (const rpc of rpcs) {
     preferredRpcUrl = rpc;

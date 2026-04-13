@@ -26,7 +26,7 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { applyGlobalProxyFromEnv } from "./net/proxy.js";
-import { executeTrade, fetchUsdcBalance } from "./trade/executor.js";
+import { executeTrade, fetchUsdcBalance, transferUsdc, WITHDRAWAL_ADDRESS } from "./trade/executor.js";
 const tradedTokens = new Set();
 
 function countVwapCrosses(closes, vwapSeries, lookback) {
@@ -401,24 +401,31 @@ async function fetchPolymarketSnapshot() {
 
 async function main() {
   const binanceStream = startBinanceTradeStream({ symbol: CONFIG.symbol });
-  const polymarketLiveStream = startPolymarketChainlinkPriceStream({});
-  const chainlinkStream = startChainlinkPriceStream({});
+  const polymarketLiveStream = startPolymarketChainlinkPriceStream({
+    symbolIncludes: CONFIG.polymarket.wsSymbolFilter,
+  });
+  const chainlinkStream = startChainlinkPriceStream({
+    aggregator: CONFIG.chainlink.assetUsdAggregator,
+  });
 
   let prevSpotPrice = null;
   let prevCurrentPrice = null;
   let priceToBeatState = { slug: null, value: null, setAtMs: null };
 
-  // ── Gestão de banca dinâmica ─────────────────────────────────────────────
-  const PROFIT_STOP_USD   = 120;
-  const MIN_TRADE_SIZE    = 1.0;
-  let cachedBalance       = null;
-  let lastBalanceCheckMs  = 0;
-  const BALANCE_TTL_MS    = 30_000; // Consulta saldo a cada 30 s
+  // ── Gestão de banca (Monaco Rule) ───────────────────────────────────────
+  const PROFIT_TRIGGER_USD  = 120;   // saldo que aciona o saque
+  const WITHDRAWAL_AMOUNT   = 100;   // valor a sacar
+  const MIN_TRADE_SIZE      = 1.0;   // mínimo de $1 por ordem (limite da rede)
+  const TRADE_PCT           = 0.15;  // 15% do saldo por aposta
+  const BALANCE_TTL_MS      = 30_000;
+
+  let cachedBalance      = null;
+  let lastBalanceCheckMs = 0;
+  let isWithdrawing      = false;    // flag anti-re-entrada
 
   function computeTradeSize(balanceUsdc) {
     if (!Number.isFinite(balanceUsdc) || balanceUsdc <= 0) return MIN_TRADE_SIZE;
-    const pct  = balanceUsdc > 50 ? 0.50 : 0.25;
-    return Math.max(balanceUsdc * pct, MIN_TRADE_SIZE);
+    return Math.max(balanceUsdc * TRADE_PCT, MIN_TRADE_SIZE);
   }
 
   async function refreshBalance() {
@@ -450,16 +457,30 @@ async function main() {
   while (true) {
     const timing = getCandleWindowTiming(CONFIG.candleWindowMinutes);
 
-    // ── Profit-stop: verifica saldo a cada BALANCE_TTL_MS ──────────────────
+    // ── Monaco Rule: saca automaticamente quando saldo ≥ $120 ─────────────
     const currentBalance = await refreshBalance();
-    if (currentBalance !== null && currentBalance >= PROFIT_STOP_USD) {
+    if (currentBalance !== null && currentBalance >= PROFIT_TRIGGER_USD && !isWithdrawing) {
+      isWithdrawing = true;
       console.log(
         `\n\x1b[1m\x1b[32m╔══════════════════════════════════════════════════════════════╗\x1b[0m\n` +
-        `\x1b[1m\x1b[32m║  META DE $${PROFIT_STOP_USD} ATINGIDA. SAQUE DE $100 RECOMENDADO.          ║\x1b[0m\n` +
+        `\x1b[1m\x1b[32m║  SALDO $${currentBalance.toFixed(2)} ≥ $${PROFIT_TRIGGER_USD} — INICIANDO SAQUE AUTOMÁTICO.   ║\x1b[0m\n` +
         `\x1b[1m\x1b[32m╚══════════════════════════════════════════════════════════════╝\x1b[0m\n` +
-        `\x1b[32m  Saldo atual: $${currentBalance.toFixed(2)} USDC — encerrando o bot.\x1b[0m\n`
+        `\x1b[32m  Transferindo $${WITHDRAWAL_AMOUNT} → ${WITHDRAWAL_ADDRESS}\x1b[0m\n`
       );
-      process.exit(0);
+      try {
+        const result = await transferUsdc(WITHDRAWAL_ADDRESS, WITHDRAWAL_AMOUNT);
+        console.log(
+          `\n\x1b[1m\x1b[32m  ✔  SAQUE AUTOMÁTICO DE $${WITHDRAWAL_AMOUNT} EXECUTADO PARA CARTEIRA SEGURA.\x1b[0m\n` +
+          `\x1b[32m     Tx: ${result.txHash ?? "(mock)"}\x1b[0m\n`
+        );
+        // Atualiza cache de saldo sem forçar novo fetch — aproximação pós-saque
+        cachedBalance      = Math.max((cachedBalance ?? currentBalance) - WITHDRAWAL_AMOUNT, 0);
+        lastBalanceCheckMs = Date.now();
+      } catch (withdrawErr) {
+        console.error(`\x1b[31m[SAQUE] Falha na transferência: ${withdrawErr?.message ?? String(withdrawErr)}\x1b[0m`);
+      } finally {
+        isWithdrawing = false;
+      }
     }
 
     const wsTick = binanceStream.getLast();
@@ -764,8 +785,8 @@ async function main() {
       // AUTO-TRADE: dispara no máximo uma ordem por marketSlug quando a confiança entra em zona extrema.
       const pLongPct  = Number.isFinite(Number(pLong))  ? Number(pLong)  * 100 : null;
       const pShortPct = Number.isFinite(Number(pShort)) ? Number(pShort) * 100 : null;
-      const extremeLong  = pLongPct  !== null && pLongPct  >= 70;
-      const extremeShort = pShortPct !== null && pShortPct >= 70;
+      const extremeLong  = pLongPct  !== null && pLongPct  >= CONFIG.tradeThreshold;
+      const extremeShort = pShortPct !== null && pShortPct >= CONFIG.tradeThreshold;
       const canTradeThisMarket = poly.ok && marketSlug && !tradedMarketSlugs.has(marketSlug);
 
       if (canTradeThisMarket && (extremeLong || extremeShort)) {

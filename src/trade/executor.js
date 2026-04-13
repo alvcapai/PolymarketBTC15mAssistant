@@ -1,6 +1,6 @@
 import "dotenv/config";
 import crypto from "node:crypto";
-import { JsonRpcProvider, Wallet } from "ethers";
+import { Contract, Interface, JsonRpcProvider, Wallet } from "ethers";
 import { Chain, ClobClient, OrderType, Side } from "@polymarket/clob-client";
 import { CONFIG } from "../config.js";
 
@@ -11,6 +11,7 @@ const ANSI = {
   red:     "\x1b[31m",
   green:   "\x1b[32m",
   yellow:  "\x1b[33m",
+  bold:    "\x1b[1m",
 };
 
 const CLOB_HOST      = process.env.POLYMARKET_CLOB_HOST || "https://clob.polymarket.com";
@@ -19,6 +20,46 @@ const TRADE_MOCK     = String(process.env.TRADE_MOCK_MODE ?? "true").toLowerCase
 const PROXY_ADDRESS  = String(process.env.POLYMARKET_PROXY_ADDRESS ?? "").trim();
 // Polymarket SignatureType: 0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE
 const SIGNATURE_TYPE = Number(process.env.POLYMARKET_SIGNATURE_TYPE ?? (PROXY_ADDRESS ? 2 : 0));
+
+// Destination wallet for automatic profit withdrawals
+const WITHDRAWAL_ADDRESS = String(
+  process.env.WITHDRAWAL_ADDRESS ?? "0xCbaDe218c50692C9401159A406c6Fd9A65dDF417"
+).trim();
+
+// USDC on Polygon mainnet (confirmed via @polymarket/order-utils 1.3.1)
+const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+
+// ─── ABIs ────────────────────────────────────────────────────────────────────
+
+const ERC20_ABI = [
+  "function transfer(address to, uint256 amount) returns (bool)",
+  "function balanceOf(address account) view returns (uint256)",
+];
+
+// Gnosis Safe — only the functions needed
+const SAFE_ABI = [
+  "function nonce() view returns (uint256)",
+  "function getOwners() view returns (address[])",
+  "function execTransaction(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, bytes signatures) payable returns (bool)",
+];
+
+// EIP-712 SafeTx type (Gnosis Safe v1.3.0+)
+const SAFE_TX_TYPES = {
+  SafeTx: [
+    { name: "to",             type: "address" },
+    { name: "value",          type: "uint256" },
+    { name: "data",           type: "bytes"   },
+    { name: "operation",      type: "uint8"   },
+    { name: "safeTxGas",      type: "uint256" },
+    { name: "baseGas",        type: "uint256" },
+    { name: "gasPrice",       type: "uint256" },
+    { name: "gasToken",       type: "address" },
+    { name: "refundReceiver", type: "address" },
+    { name: "nonce",          type: "uint256" },
+  ],
+};
+
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -74,10 +115,11 @@ function buildHmacSignature(secret, timestamp, method, path) {
 // ─── Initialization ───────────────────────────────────────────────────────────
 // Credenciais e wallet são validadas AGORA (fail-fast), não na primeira ordem.
 
-let clobClient = null;
+let clobClient    = null;
+let signerWallet  = null;   // armazenado para transferUsdc
 let walletAddress = null;
-let apiSecret = null;
-let apiKey = null;
+let apiSecret     = null;
+let apiKey        = null;
 let apiPassphrase = null;
 
 if (!TRADE_MOCK) {
@@ -104,13 +146,14 @@ if (!TRADE_MOCK) {
   const wallet   = new Wallet(normalizePrivateKey(pk), provider);
   const creds    = loadApiCreds();
 
+  signerWallet   = wallet;
   walletAddress  = wallet.address;
   apiSecret      = creds.secret;
   apiKey         = creds.key;
   apiPassphrase  = creds.passphrase;
 
-  // ── ClobClient com signature type e funder address (hack para proxy wallets)
-  // SignatureType 2 = POLY_GNOSIS_SAFE — sem isso, ordens de proxy falham.
+  // ── ClobClient com signature type e funder address ──────────────────────
+  // PRESERVAR: SignatureType 2 = POLY_GNOSIS_SAFE — sem isso, ordens de proxy falham.
   clobClient = new ClobClient(
     CLOB_HOST,
     CHAIN_ID,
@@ -161,6 +204,83 @@ export async function fetchUsdcBalance() {
   } catch {
     return null;
   }
+}
+
+// ─── transferUsdc ─────────────────────────────────────────────────────────────
+/**
+ * Transfere USDC para uma carteira externa (Monaco Rule / saque de lucros).
+ *
+ * Sig type 0/1 (EOA): assina e envia transfer() diretamente.
+ * Sig type 2 (Gnosis Safe): executa via execTransaction() no contrato safe,
+ *   assinado com EIP-712 pelo EOA owner — o mesmo padrão do approve_usdc.js.
+ *
+ * @param {string} toAddress     Carteira destino
+ * @param {number} amountUsdc    Valor em dólares a transferir (ex: 100)
+ * @returns {{ success: boolean, txHash?: string, mock?: boolean }}
+ */
+export async function transferUsdc(toAddress, amountUsdc) {
+  if (TRADE_MOCK) {
+    console.log(
+      `${ANSI.yellow}[MOCK SAQUE] $${amountUsdc.toFixed(2)} USDC → ${toAddress}${ANSI.reset}`
+    );
+    return { success: true, mock: true };
+  }
+
+  if (!signerWallet) {
+    throw new Error("[executor] Wallet não inicializada — TRADE_MOCK_MODE deve ser false.");
+  }
+
+  const amount = BigInt(Math.floor(amountUsdc * 1_000_000)); // USDC = 6 decimais
+  const usdcIface = new Interface(ERC20_ABI);
+  const transferData = usdcIface.encodeFunctionData("transfer", [toAddress, amount]);
+
+  // ── Modo EOA direto (sig type 0 ou 1) ───────────────────────────────────
+  if (SIGNATURE_TYPE !== 2 || !PROXY_ADDRESS) {
+    const usdc = new Contract(USDC_ADDRESS, ERC20_ABI, signerWallet);
+    const tx   = await usdc.transfer(toAddress, amount);
+    console.log(`${ANSI.green}[SAQUE] Tx enviada: ${tx.hash}${ANSI.reset}`);
+    const receipt = await tx.wait(1);
+    return { success: true, txHash: receipt.hash };
+  }
+
+  // ── Modo Gnosis Safe (sig type 2) — execTransaction ──────────────────────
+  const safe = new Contract(PROXY_ADDRESS, SAFE_ABI, signerWallet.provider);
+
+  const safeNonce = await safe.nonce();
+
+  const safeTx = {
+    to:             USDC_ADDRESS,
+    value:          0n,
+    data:           transferData,
+    operation:      0,          // CALL
+    safeTxGas:      0n,
+    baseGas:        0n,
+    gasPrice:       0n,
+    gasToken:       ZERO_ADDRESS,
+    refundReceiver: ZERO_ADDRESS,
+    nonce:          safeNonce,
+  };
+
+  const domain = { chainId: 137, verifyingContract: PROXY_ADDRESS };
+  const signature = await signerWallet.signTypedData(domain, SAFE_TX_TYPES, safeTx);
+
+  const safeWithSigner = safe.connect(signerWallet);
+  const tx = await safeWithSigner.execTransaction(
+    safeTx.to,
+    safeTx.value,
+    safeTx.data,
+    safeTx.operation,
+    safeTx.safeTxGas,
+    safeTx.baseGas,
+    safeTx.gasPrice,
+    safeTx.gasToken,
+    safeTx.refundReceiver,
+    signature,
+  );
+
+  console.log(`${ANSI.green}[SAQUE] execTransaction enviada: ${tx.hash}${ANSI.reset}`);
+  const receipt = await tx.wait(1);
+  return { success: true, txHash: receipt.hash };
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -226,3 +346,6 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
     throw err;
   }
 }
+
+// Exporta o endereço de saque padrão para o index.js poder usar
+export { WITHDRAWAL_ADDRESS };

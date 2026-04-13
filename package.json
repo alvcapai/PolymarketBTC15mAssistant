@@ -5,8 +5,10 @@
   "private": true,
   "scripts": {
     "start": "node src/index.js",
-    "start:15m": "TIMEFRAME=15m node src/index.js",
-    "start:5m": "TIMEFRAME=5m node src/index.js"
+    "start:btc15m": "TIMEFRAME=btc-15m node src/index.js",
+    "start:btc5m":  "TIMEFRAME=btc-5m  node src/index.js",
+    "start:eth15m": "TIMEFRAME=eth-15m node src/index.js",
+    "start:eth5m":  "TIMEFRAME=eth-5m  node src/index.js"
   },
   "dependencies": {
     "@polymarket/clob-client": "^2.8.0",
