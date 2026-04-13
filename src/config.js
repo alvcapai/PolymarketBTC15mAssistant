@@ -26,7 +26,7 @@ const ASSET_CFG = {
     seriesSlug15m:  "btc-up-or-down-15m",
     seriesId5m:     "10684",
     seriesSlug5m:   "btc-up-or-down-5m",
-    tradeThreshold: 70,
+    tradeThreshold: 60,
     // Chainlink BTC/USD on Polygon mainnet
     aggregator:     process.env.CHAINLINK_BTC_USD_AGGREGATOR
                     || "0xc907E116054Ad103354f2D350FD2514433D57F6f",
@@ -38,7 +38,7 @@ const ASSET_CFG = {
     seriesSlug15m:  "eth-up-or-down-15m",
     seriesId5m:     "10683",
     seriesSlug5m:   "eth-up-or-down-5m",
-    tradeThreshold: 75,
+    tradeThreshold: 60,
     // Chainlink ETH/USD on Polygon mainnet
     aggregator:     process.env.CHAINLINK_ETH_USD_AGGREGATOR
                     || "0xF9680D99D6C9589e2a93a78A04A279e509205945",
