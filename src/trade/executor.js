@@ -342,7 +342,7 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
     side:       Side.BUY,
     price:      roundedPrice,
     size:       shareSize,
-    feeRateBps: 0,
+    feeRateBps: 1000,
   });
 
   // ATENÇÃO: clobClient.postOrder() NUNCA lança exceção — em falha de API retorna
