@@ -26,7 +26,6 @@ const ASSET_CFG = {
     seriesSlug15m:  "btc-up-or-down-15m",
     seriesId5m:     "10684",
     seriesSlug5m:   "btc-up-or-down-5m",
-    tradeThreshold: 75,
     // Chainlink BTC/USD on Polygon mainnet
     aggregator:     process.env.CHAINLINK_BTC_USD_AGGREGATOR
                     || "0xc907E116054Ad103354f2D350FD2514433D57F6f",
@@ -38,7 +37,6 @@ const ASSET_CFG = {
     seriesSlug15m:  "eth-up-or-down-15m",
     seriesId5m:     "10683",
     seriesSlug5m:   "eth-up-or-down-5m",
-    tradeThreshold: 75,
     // Chainlink ETH/USD on Polygon mainnet
     aggregator:     process.env.CHAINLINK_ETH_USD_AGGREGATOR
                     || "0xF9680D99D6C9589e2a93a78A04A279e509205945",
@@ -66,16 +64,6 @@ export const CONFIG = {
   macdFast:    12,
   macdSlow:    26,
   macdSignal:  9,
-
-  // Trigger threshold (% probability)
-  tradeThreshold: ac.tradeThreshold,
-
-  // ── Feature flags de risco (opt-in) ───────────────────────────────────────
-  // ENABLE_RISK_LAYER=true     → ativa bankroll cycle, stake por edge, losing streak
-  // ENABLE_ASSISTANT_SIGNAL_VALIDATION=true → comprime score heurístico antes de usar como prob_modelo
-  // Padrão false preserva o comportamento existente sem nenhuma mudança.
-  enableRiskLayer:          (process.env.ENABLE_RISK_LAYER                      || "false").toLowerCase() === "true",
-  enableSignalValidation:   (process.env.ENABLE_ASSISTANT_SIGNAL_VALIDATION     || "false").toLowerCase() === "true",
 
   // CSV log path — one file per mode
   signalsCsv: `./logs/signals-${ASSET}-${WINDOW}.csv`,
