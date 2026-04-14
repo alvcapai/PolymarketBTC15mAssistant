@@ -76,6 +76,8 @@ export function checkCycleFloor(state) {
       reason: `bankroll_${state.bankroll.toFixed(2)}_below_floor_${floor}`
     };
   }
+  // Bankroll recovered above floor — reset flag so trading resumes
+  state.cycleEnded = false;
   return { cycleEnded: false, floor, reason: null };
 }
 
