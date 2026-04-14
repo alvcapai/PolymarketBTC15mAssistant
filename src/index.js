@@ -789,12 +789,31 @@ async function main() {
       const extremeShort = pShortPct !== null && pShortPct >= CONFIG.tradeThreshold;
       const canTradeThisMarket = poly.ok && marketSlug && !tradedMarketSlugs.has(marketSlug);
 
+      // ── Log de rejeição explícito para depuração ─────────────────────────
+      if (!extremeLong && !extremeShort) {
+        const longStr  = pLongPct  !== null ? `LONG ${pLongPct.toFixed(1)}%`  : "LONG -";
+        const shortStr = pShortPct !== null ? `SHORT ${pShortPct.toFixed(1)}%` : "SHORT -";
+        process.stderr.write(
+          `\x1b[90m[AUTO-TRADE] Confiança abaixo do threshold ${CONFIG.tradeThreshold}% — ${longStr} / ${shortStr} — sem ordem.\x1b[0m\n`
+        );
+      } else if (!canTradeThisMarket) {
+        const reason = !poly.ok
+          ? "mercado Polymarket indisponível"
+          : !marketSlug
+          ? "slug do mercado vazio"
+          : `mercado já operado (${marketSlug})`;
+        process.stderr.write(
+          `\x1b[33m[AUTO-TRADE] Sinal atingiu threshold mas trade bloqueado: ${reason}.\x1b[0m\n`
+        );
+      }
+
       if (canTradeThisMarket && (extremeLong || extremeShort)) {
         const targetTokenId = extremeLong ? poly.tokens.upTokenId : poly.tokens.downTokenId;
         const targetPrice   = extremeLong
           ? (poly.orderbook.up.bestAsk   ?? poly.prices.up)
           : (poly.orderbook.down.bestAsk ?? poly.prices.down);
         const targetProbability = extremeLong ? pLongPct : pShortPct;
+        const targetSide = extremeLong ? "LONG" : "SHORT";
 
         // ── Gestão de banca dinâmica ────────────────────────────────────────
         const balanceNow  = await refreshBalance();
@@ -802,7 +821,20 @@ async function main() {
           ? computeTradeSize(balanceNow)
           : Math.max(Number(process.env.TRADE_SIZE_USDC || "5"), MIN_TRADE_SIZE);
 
-        if (targetTokenId && !tradedTokens.has(targetTokenId) && Number.isFinite(Number(targetPrice)) && Number(targetPrice) > 0 && Number.isFinite(tradeSizeUsd) && tradeSizeUsd > 0) {
+        // Validações pré-execução com log explícito
+        if (!targetTokenId) {
+          process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — tokenId do outcome ${targetSide} ausente (mercado: ${marketSlug}).\x1b[0m\n`);
+        } else if (tradedTokens.has(targetTokenId)) {
+          process.stderr.write(`\x1b[33m[AUTO-TRADE] BLOQUEADO — tokenId ${targetTokenId} já operado nesta sessão.\x1b[0m\n`);
+        } else if (!Number.isFinite(Number(targetPrice)) || Number(targetPrice) <= 0) {
+          process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — preço inválido para ${targetSide}: ${targetPrice} (mercado: ${marketSlug}).\x1b[0m\n`);
+        } else if (!Number.isFinite(tradeSizeUsd) || tradeSizeUsd <= 0) {
+          process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — tamanho de trade inválido: ${tradeSizeUsd} (saldo: ${balanceNow}).\x1b[0m\n`);
+        } else {
+          process.stderr.write(
+            `\x1b[32m[AUTO-TRADE] DISPARANDO ordem ${targetSide} — confiança ${targetProbability.toFixed(1)}%` +
+            ` | tamanho $${tradeSizeUsd.toFixed(2)} | preço ${Number(targetPrice).toFixed(4)} | token ${targetTokenId}\x1b[0m\n`
+          );
           try {
             tradedTokens.add(targetTokenId);
             await executeTrade(
@@ -815,8 +847,14 @@ async function main() {
             tradedMarketSlugs.add(marketSlug);
             // Invalidar cache de saldo após trade
             lastBalanceCheckMs = 0;
+            process.stderr.write(`\x1b[32m[AUTO-TRADE] Ordem ${targetSide} executada com sucesso (${marketSlug}).\x1b[0m\n`);
           } catch (tradeError) {
-            console.log(`Trade error: ${tradeError?.message ?? String(tradeError)}`);
+            // Remove token do set para permitir nova tentativa na próxima iteração
+            tradedTokens.delete(targetTokenId);
+            process.stderr.write(
+              `\x1b[31m[AUTO-TRADE] FALHA ao executar ordem ${targetSide}: ${tradeError?.message ?? String(tradeError)}\x1b[0m\n`
+            );
+            console.error(`[AUTO-TRADE] Erro de execução:`, tradeError);
           }
         }
       }
