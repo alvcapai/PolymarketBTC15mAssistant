@@ -6,18 +6,18 @@ import { CONFIG } from "../config.js";
 
 // ─── Shim de compatibilidade ethers v5 → v6 ──────────────────────────────────
 // O SDK @polymarket/clob-client v2.8.0 foi escrito para ethers v5 e chama
-// signer._signTypedData() internamente (ver dist/signing/eip712.js).
-// No ethers v6 esse método foi renomeado para signTypedData (sem underscore).
-//
-// Patch no prototype garante compatibilidade para QUALQUER instância de Wallet,
-// incluindo wrappers internos criados pelo próprio SDK.
-if (typeof Wallet.prototype._signTypedData !== "function") {
-  Wallet.prototype._signTypedData = function (...args) {
-    return this.signTypedData(...args);
-  };
+// signer._signTypedData() internamente. No ethers v6 esse método foi renomeado
+// para signTypedData (sem underscore), então o shim precisa existir na instância
+// de signer recebida pelo ClobClient.
+function ensureLegacyTypedDataSigner(signer) {
+  if (typeof signer?._signTypedData === "function") return signer;
+  if (typeof signer?.signTypedData !== "function") return signer;
+
+  signer._signTypedData = signer.signTypedData.bind(signer);
   process.stderr.write(
-    "\x1b[33m[executor] Shim Wallet.prototype._signTypedData aplicado (ethers v5→v6).\x1b[0m\n"
+    "\x1b[33m[executor] Shim signer._signTypedData injetado na instância (ethers v5→v6).\x1b[0m\n"
   );
+  return signer;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -160,6 +160,7 @@ if (!TRADE_MOCK) {
 
   const provider = new JsonRpcProvider(CONFIG.chainlink.polygonRpcUrl);
   const wallet   = new Wallet(normalizePrivateKey(pk), provider);
+  const clobSigner = ensureLegacyTypedDataSigner(wallet);
 
   const creds    = loadApiCreds();
 
@@ -174,7 +175,7 @@ if (!TRADE_MOCK) {
   clobClient = new ClobClient(
     CLOB_HOST,
     CHAIN_ID,
-    wallet,
+    clobSigner,
     creds,
     SIGNATURE_TYPE,
     PROXY_ADDRESS || undefined,
