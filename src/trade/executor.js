@@ -4,6 +4,22 @@ import { Contract, Interface, JsonRpcProvider, Wallet } from "ethers";
 import { Chain, ClobClient, OrderType, Side } from "@polymarket/clob-client";
 import { CONFIG } from "../config.js";
 
+// ─── Shim de compatibilidade ethers v5 → v6 ──────────────────────────────────
+// O SDK @polymarket/clob-client v2.8.0 foi escrito para ethers v5 e chama
+// signer._signTypedData() internamente (ver dist/signing/eip712.js).
+// No ethers v6 esse método foi renomeado para signTypedData (sem underscore).
+//
+// Patch no prototype garante compatibilidade para QUALQUER instância de Wallet,
+// incluindo wrappers internos criados pelo próprio SDK.
+if (typeof Wallet.prototype._signTypedData !== "function") {
+  Wallet.prototype._signTypedData = function (...args) {
+    return this.signTypedData(...args);
+  };
+  process.stderr.write(
+    "\x1b[33m[executor] Shim Wallet.prototype._signTypedData aplicado (ethers v5→v6).\x1b[0m\n"
+  );
+}
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const ANSI = {
@@ -144,18 +160,6 @@ if (!TRADE_MOCK) {
 
   const provider = new JsonRpcProvider(CONFIG.chainlink.polygonRpcUrl);
   const wallet   = new Wallet(normalizePrivateKey(pk), provider);
-
-  // Shim de compatibilidade: o SDK @polymarket/clob-client usa a API do ethers v5
-  // (_signTypedData), mas este projeto usa ethers v6 (signTypedData sem underscore).
-  // Sem este shim, TODA ordem falha silenciosamente com:
-  //   "this.signer._signTypedData is not a function"
-  if (typeof wallet._signTypedData !== "function") {
-    wallet._signTypedData = (domain, types, value) =>
-      wallet.signTypedData(domain, types, value);
-    process.stderr.write(
-      `${ANSI.yellow}[executor] Shim _signTypedData → signTypedData aplicado (ethers v5→v6).${ANSI.reset}\n`
-    );
-  }
 
   const creds    = loadApiCreds();
 
