@@ -6,7 +6,7 @@
  * Uso: node monitor.js
  */
 
-import { execSync, spawn } from "node:child_process";
+import { execSync, spawnSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import readline from "node:readline";
 import path from "node:path";
@@ -102,41 +102,48 @@ function sw() {
 
 // ─── Detecção de PM2 ──────────────────────────────────────────────────────────
 
-let _pm2Available = null;
+let _pm2Bin = null;
 
-function isPm2Available() {
-  if (_pm2Available !== null) return _pm2Available;
-  try {
-    execSync("pm2 --version", { encoding: "utf8", timeout: 2000, stdio: "pipe" });
-    _pm2Available = true;
-  } catch {
-    _pm2Available = false;
+function getPm2Bin() {
+  if (_pm2Bin !== null) return _pm2Bin;
+  // Localiza o binário pm2 — evita depender do PATH do shell interativo
+  for (const candidate of ["/usr/bin/pm2", "/usr/local/bin/pm2"]) {
+    const r = spawnSync(candidate, ["--version"], { encoding: "utf8", timeout: 2000 });
+    if (r.status === 0) { _pm2Bin = candidate; return _pm2Bin; }
   }
-  return _pm2Available;
+  // Último recurso: pm2 via PATH
+  const r = spawnSync("pm2", ["--version"], { encoding: "utf8", timeout: 2000, shell: true });
+  _pm2Bin = r.status === 0 ? "pm2" : "";
+  return _pm2Bin;
 }
 
 // ─── Leitura de processos ─────────────────────────────────────────────────────
 
 function getRunningPids() {
-  // Tenta via PM2 primeiro — env vars não aparecem no ps aux com PM2
-  if (isPm2Available()) {
-    try {
-      const raw  = execSync("pm2 jlist", { encoding: "utf8", timeout: 3000, stdio: "pipe" });
-      const list = JSON.parse(raw);
-      const map  = {};
-      for (const proc of list) {
-        const tf = proc.pm2_env?.TIMEFRAME ?? proc.pm2_env?.env?.TIMEFRAME;
-        const pid = proc.pid;
-        const status = proc.pm2_env?.status;
-        if (tf && pid && status === "online") map[tf] = Number(pid);
-      }
-      return map;
-    } catch { /* fallback abaixo */ }
+  const pm2 = getPm2Bin();
+
+  if (pm2) {
+    // spawnSync evita interferências com stdin em raw mode
+    const r = spawnSync(pm2, ["jlist"], { encoding: "utf8", timeout: 4000 });
+    if (r.status === 0 && r.stdout) {
+      try {
+        const list = JSON.parse(r.stdout);
+        const map  = {};
+        for (const proc of list) {
+          const tf     = proc.pm2_env?.TIMEFRAME ?? proc.pm2_env?.env?.TIMEFRAME;
+          const pid    = proc.pid;
+          const status = proc.pm2_env?.status;
+          if (tf && pid && status === "online") map[tf] = Number(pid);
+        }
+        if (Object.keys(map).length > 0) return map;
+      } catch { /* JSON inválido, tenta fallback */ }
+    }
   }
 
   // Fallback: ps aux para processos iniciados manualmente
   try {
-    const out = execSync("ps aux", { encoding: "utf8", timeout: 2000, stdio: "pipe" });
+    const r   = spawnSync("ps", ["aux"], { encoding: "utf8", timeout: 2000 });
+    const out = r.stdout ?? "";
     const map = {};
     for (const line of out.split("\n")) {
       if (!line.includes("node") || !line.includes("src/index")) continue;
@@ -364,7 +371,7 @@ function render() {
 
   // ── Rodapé ──
   lines.push(sep);
-  const pm2Label = isPm2Available() ? A.green + "PM2" + A.reset : A.yellow + "manual" + A.reset;
+  const pm2Label = getPm2Bin() ? A.green + "PM2" + A.reset : A.yellow + "manual" + A.reset;
   if (mode === "view") {
     lines.push(A.dim + ` ↑ ↓  navegar   Enter = iniciar/parar   R = restart   q = sair   [${A.reset}${pm2Label}${A.dim}]` + A.reset);
   } else {
@@ -378,14 +385,18 @@ function render() {
 
 // ─── Ações ────────────────────────────────────────────────────────────────────
 
+function pm2Cmd(...args) {
+  const bin = getPm2Bin();
+  if (!bin) return false;
+  const r = spawnSync(bin, args, { cwd: __dirname, encoding: "utf8", timeout: 6000 });
+  return r.status === 0;
+}
+
 function startAgent(agent) {
-  if (isPm2Available()) {
-    try {
-      execSync(`pm2 start ecosystem.config.cjs --only ${agent.name}`, {
-        cwd: __dirname, encoding: "utf8", stdio: "pipe", timeout: 5000,
-      });
-      return;
-    } catch { /* fallback abaixo */ }
+  // Se o processo já está no PM2 (mesmo parado), usa restart; caso contrário, start
+  if (getPm2Bin()) {
+    const ok = pm2Cmd("restart", agent.name) || pm2Cmd("start", "ecosystem.config.cjs", "--only", agent.name);
+    if (ok) return;
   }
   // Fallback: spawn direto
   mkdirSync(path.resolve(__dirname, "logs"), { recursive: true });
@@ -399,26 +410,16 @@ function startAgent(agent) {
 }
 
 function stopAgent(agent) {
-  if (isPm2Available()) {
-    try {
-      execSync(`pm2 stop ${agent.name}`, {
-        cwd: __dirname, encoding: "utf8", stdio: "pipe", timeout: 5000,
-      });
-      return;
-    } catch { /* fallback abaixo */ }
+  if (getPm2Bin()) {
+    if (pm2Cmd("stop", agent.name)) return;
   }
   if (!agent.pid) return;
   try { process.kill(agent.pid, "SIGTERM"); } catch { /* já encerrado */ }
 }
 
 function restartAgent(agent) {
-  if (isPm2Available()) {
-    try {
-      execSync(`pm2 restart ${agent.name}`, {
-        cwd: __dirname, encoding: "utf8", stdio: "pipe", timeout: 5000,
-      });
-      return;
-    } catch { /* fallback abaixo */ }
+  if (getPm2Bin()) {
+    if (pm2Cmd("restart", agent.name)) return;
   }
   stopAgent(agent);
   setTimeout(() => startAgent(agent), 1000);
