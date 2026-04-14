@@ -314,19 +314,19 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
 
   // ── Mock Mode ────────────────────────────────────────────────────────────
   if (TRADE_MOCK) {
-    console.log(
+    process.stderr.write(
       `${ANSI.yellow}[MOCK EXECUCAO] Apostando $${usdcSize.toFixed(2)} em ${Side.BUY}` +
       ` no Token ${tokenId} a ${formatCents(price)}` +
-      ` (Probabilidade: ${probabilityN.toFixed(2)}%)${ANSI.reset}`
+      ` (Probabilidade: ${probabilityN.toFixed(2)}%)${ANSI.reset}\n`
     );
     return { success: true, mock: true, tokenId, side: Side.BUY, usdcSize, shareSize, price, probability: probabilityN };
   }
 
   // ── Modo Real ────────────────────────────────────────────────────────────
-  console.log(
+  process.stderr.write(
     `${ANSI.green}[EXECUCAO] Apostando $${usdcSize.toFixed(2)} em ${Side.BUY}` +
     ` no Token ${tokenId} a ${formatCents(price)}` +
-    ` (Probabilidade: ${probabilityN.toFixed(2)}%)${ANSI.reset}`
+    ` (Probabilidade: ${probabilityN.toFixed(2)}%)${ANSI.reset}\n`
   );
 
   const order = await clobClient.createOrder({
@@ -339,10 +339,10 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
 
   try {
     const response = await clobClient.postOrder(order, OrderType.GTC);
-    console.log(`${ANSI.green}[EXECUCAO] Ordem enviada com sucesso.${ANSI.reset}`);
+    process.stderr.write(`${ANSI.green}[EXECUCAO] Ordem enviada com sucesso.${ANSI.reset}\n`);
     return response;
   } catch (err) {
-    console.error(`${ANSI.red}[EXECUCAO] Falha ao enviar ordem: ${err?.message ?? String(err)}${ANSI.reset}`);
+    process.stderr.write(`${ANSI.red}[EXECUCAO] Falha ao enviar ordem: ${err?.message ?? String(err)}${ANSI.reset}\n`);
     throw err;
   }
 }

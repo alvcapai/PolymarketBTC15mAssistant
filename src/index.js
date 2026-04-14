@@ -831,8 +831,10 @@ async function main() {
         } else if (!Number.isFinite(tradeSizeUsd) || tradeSizeUsd <= 0) {
           process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — tamanho de trade inválido: ${tradeSizeUsd} (saldo: ${balanceNow}).\x1b[0m\n`);
         } else {
+          const isMockMode = String(process.env.TRADE_MOCK_MODE ?? "true").toLowerCase() === "true";
           process.stderr.write(
-            `\x1b[32m[AUTO-TRADE] DISPARANDO ordem ${targetSide} — confiança ${targetProbability.toFixed(1)}%` +
+            `\x1b[32m[AUTO-TRADE] DISPARANDO ordem ${targetSide}${isMockMode ? " \x1b[33m[MOCK]\x1b[32m" : " \x1b[1m[REAL]\x1b[22m\x1b[32m"}` +
+            ` — confiança ${targetProbability.toFixed(1)}%` +
             ` | tamanho $${tradeSizeUsd.toFixed(2)} | preço ${Number(targetPrice).toFixed(4)} | token ${targetTokenId}\x1b[0m\n`
           );
           try {
@@ -859,9 +861,11 @@ async function main() {
         }
       }
     } catch (err) {
-      console.log("────────────────────────────");
-      console.log(`Error: ${err?.message ?? String(err)}`);
-      console.log("────────────────────────────");
+      // Erro no loop principal — vai para stderr para não ser apagado pelo renderScreen
+      process.stderr.write(
+        `\x1b[31m[LOOP] ERRO no ciclo principal — bloco de trade pode não ter sido alcançado:\x1b[0m\n` +
+        `\x1b[31m  ${err?.stack ?? err?.message ?? String(err)}\x1b[0m\n`
+      );
     }
 
     await sleep(CONFIG.pollIntervalMs);
