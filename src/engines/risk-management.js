@@ -1,5 +1,8 @@
-export const MIN_EDGE = 0.04;
-export const MIN_PROB = 0.75;
+export const MIN_EDGE = 0.10;
+export const MAX_EDGE = 0.15;
+export const MIN_PROB = 0.80;
+export const MIN_MARKET_PROB = 0.75;
+export const MAX_STAKE = 1.0;
 export const MAX_POSITIONS = 2;
 export const MAX_EXPOSURE_PCT = 0.35;
 export const WITHDRAWAL_TRIGGER = 150;
@@ -103,14 +106,16 @@ export function computeStake(state, edge) {
   if (state.losingStreak >= 3) {
     stake *= 0.5;
   }
-  return Math.max(stake, MIN_TRADE_SIZE);
+  stake = Math.max(stake, MIN_TRADE_SIZE);
+  return Math.min(stake, MAX_STAKE);
 }
 
 export function decideEntry(state, {
   probModelUp,
   probModelDown,
   marketProbUp,
-  marketProbDown
+  marketProbDown,
+  marketSlug
 }) {
   const modelUp = toFiniteOrNull(probModelUp);
   const modelDown = toFiniteOrNull(probModelDown);
@@ -158,6 +163,24 @@ export function decideEntry(state, {
       stake: 0
     };
   }
+  if (marketSlug) {
+    for (const pos of state.positions.values()) {
+      if (pos.marketSlug === marketSlug) {
+        return {
+          canEnter: false,
+          reason: `position_already_open_for_market_${marketSlug}`,
+          side,
+          probModel,
+          probMarket,
+          edge,
+          edgeUp,
+          edgeDown,
+          stake: 0
+        };
+      }
+    }
+  }
+
   if (probModel < MIN_PROB) {
     return {
       canEnter: false,
@@ -171,10 +194,23 @@ export function decideEntry(state, {
       stake: 0
     };
   }
-  if (edge < MIN_EDGE) {
+  if (probMarket < MIN_MARKET_PROB) {
     return {
       canEnter: false,
-      reason: `edge_${edge.toFixed(4)}_below_${MIN_EDGE}`,
+      reason: `prob_market_${probMarket.toFixed(4)}_below_${MIN_MARKET_PROB}`,
+      side,
+      probModel,
+      probMarket,
+      edge,
+      edgeUp,
+      edgeDown,
+      stake: 0
+    };
+  }
+  if (edge < MIN_EDGE || edge > MAX_EDGE) {
+    return {
+      canEnter: false,
+      reason: `edge_${edge.toFixed(4)}_out_of_range_${MIN_EDGE}_${MAX_EDGE}`,
       side,
       probModel,
       probMarket,

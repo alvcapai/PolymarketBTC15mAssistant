@@ -325,6 +325,7 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
   const probabilityN = assertFinite(probability, "probability");
 
   if (usdcSize <= 0)            throw new Error("[executor] sizeUsdc deve ser > 0.");
+  if (usdcSize > 1.0)           throw new Error("[executor] GUARDRAIL: sizeUsdc não pode exceder $1.00.");
   if (price <= 0 || price >= 1) throw new Error("[executor] limitPrice deve estar entre 0 e 1 (exclusive).");
 
   // Arredondar para o tick mínimo do Polymarket (0.01 = 1 centavo)

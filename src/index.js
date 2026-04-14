@@ -495,11 +495,14 @@ async function main() {
         marketNo: marketDownRaw
       });
 
+      const marketSlug = poly.ok ? String(poly.market?.slug ?? "") : "";
+      
       const decision = decideEntry(bankrollState, {
         probModelUp: calibrated.probModelUp,
         probModelDown: calibrated.probModelDown,
         marketProbUp: edge.marketUp,
-        marketProbDown: edge.marketDown
+        marketProbDown: edge.marketDown,
+        marketSlug
       });
 
       const signal = toDecisionSignal(decision);
@@ -507,7 +510,6 @@ async function main() {
 
       const spotPrice = wsPrice ?? lastPrice;
       const currentPrice = chainlink?.price ?? null;
-      const marketSlug = poly.ok ? String(poly.market?.slug ?? "") : "";
       const decisionColor = decision.canEnter ? ANSI.green : ANSI.yellow;
 
       const lines = [
