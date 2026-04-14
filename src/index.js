@@ -416,7 +416,7 @@ async function main() {
   const PROFIT_TRIGGER_USD  = 120;   // saldo que aciona o saque
   const WITHDRAWAL_AMOUNT   = 100;   // valor a sacar
   const MIN_TRADE_SIZE      = 1.0;   // mínimo de $1 por ordem (limite da rede)
-  const TRADE_PCT           = 0.15;  // 15% do saldo por aposta
+  const TRADE_PCT           = 0.25;  // 25% do saldo por aposta
   const BALANCE_TTL_MS      = 30_000;
 
   let cachedBalance      = null;
