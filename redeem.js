@@ -30,6 +30,7 @@ const CTF_ADDRESS   = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045";
 const USDC_ADDRESS  = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 
 // API
+const DATA_API      = "https://data-api.polymarket.com";
 const GAMMA_API     = "https://gamma-api.polymarket.com";
 const CLOB_API      = "https://clob.polymarket.com";
 
@@ -81,38 +82,23 @@ async function fetchJson(url) {
   return res.json();
 }
 
-// ─── Busca posições resgatáveis via API Gamma ─────────────────────────────────
+// ─── Busca posições resgatáveis via Data API ──────────────────────────────────
 
 async function fetchRedeemablePositions(address) {
-  // Tenta endpoint de posições da Gamma API
-  let positions = [];
-  try {
-    const data = await fetchJson(
-      `${GAMMA_API}/positions?user=${address}&redeemable=true&limit=100`
-    );
-    positions = Array.isArray(data) ? data : (data?.results ?? data?.data ?? []);
-  } catch {
-    console.error(`${Y}Aviso: endpoint redeemable falhou, tentando posições gerais...${X}`);
-  }
+  // data-api.polymarket.com retorna todas as posições com campos ricos
+  const data = await fetchJson(
+    `${DATA_API}/positions?user=${address}&sizeThreshold=.01&limit=500`
+  );
+  const all = Array.isArray(data) ? data : (data?.results ?? data?.data ?? []);
 
-  if (!positions.length) {
-    try {
-      const data = await fetchJson(
-        `${GAMMA_API}/positions?user=${address}&limit=200`
-      );
-      positions = Array.isArray(data) ? data : (data?.results ?? data?.data ?? []);
-      // Filtrar manualmente as que podem ser resgatáveis
-      positions = positions.filter(p =>
-        p.redeemable === true ||
-        p.redeemable === "true" ||
-        (p.market?.closed === true && Number(p.currentValue ?? 0) > 0)
-      );
-    } catch (e) {
-      console.error(`${R}Erro ao buscar posições: ${e.message}${X}`);
-    }
-  }
+  // Filtra: redeemable=true E curPrice=1 (token vencedor)
+  // Posições perdedoras têm curPrice=0 e currentValue=0
+  const winners = all.filter(p =>
+    (p.redeemable === true || p.redeemable === "true") &&
+    Number(p.curPrice ?? p.currentPrice ?? 0) === 1
+  );
 
-  return positions;
+  return winners;
 }
 
 // ─── Verifica resolução e payout no contrato CTF ──────────────────────────────
@@ -227,41 +213,38 @@ async function main() {
   let redeemed = 0;
 
   for (const pos of positions) {
-    const conditionId  = pos.conditionId ?? pos.condition_id ?? pos.market?.conditionId;
-    const marketTitle  = pos.market?.question ?? pos.market?.slug ?? pos.title ?? conditionId;
-    const numOutcomes  = Number(pos.market?.outcomes?.length ?? 2);
-    const tokenId      = pos.asset ?? pos.tokenId ?? pos.assetId;
-    const size         = Number(pos.size ?? pos.amount ?? 0);
+    const conditionId    = pos.conditionId ?? pos.condition_id;
+    const marketTitle    = pos.title ?? pos.slug ?? conditionId;
+    const tokenId        = pos.asset ?? pos.tokenId ?? pos.assetId;
+    const outcomeIndex   = Number(pos.outcomeIndex ?? 0);
+    const size           = Number(pos.size ?? 0);
+    const currentValue   = Number(pos.currentValue ?? 0);
+
+    // indexSet para o outcome vencedor: bit na posição outcomeIndex
+    const winningIndexSets = [1 << outcomeIndex];
 
     console.log(`─────────────────────────────────────────────────`);
     console.log(`${B}Mercado:${X}    ${marketTitle}`);
     console.log(`${D}conditionId: ${conditionId}${X}`);
-    console.log(`${D}tokenId:     ${tokenId}${X}`);
-    console.log(`${D}size:        ${size}${X}`);
+    console.log(`${D}outcome:     ${pos.outcome} (index ${outcomeIndex}) → indexSet [${winningIndexSets}]${X}`);
+    console.log(`${D}size:        ${size} tokens  |  valor: $${currentValue.toFixed(4)}${X}`);
 
     if (!conditionId) {
       console.log(`${Y}Pulando — conditionId não disponível.${X}\n`);
       continue;
     }
 
-    // Verificar resolução no contrato
-    const { resolved, winningIndexSets } = await getConditionInfo(ctf, conditionId, numOutcomes);
-    if (!resolved) {
-      console.log(`${Y}Mercado ainda não resolvido no contrato CTF.${X}`);
-      continue;
-    }
-
-    // Verificar saldo de tokens na proxy
+    // Verificar saldo de tokens na proxy (confirmação on-chain)
     if (tokenId) {
       const balance = await ctf.balanceOf(PROXY_ADDRESS, BigInt(tokenId)).catch(() => 0n);
-      console.log(`${D}Saldo do token: ${(Number(balance) / 1e6).toFixed(6)}${X}`);
+      console.log(`${D}Saldo on-chain: ${balance} (raw)${X}`);
       if (balance === 0n) {
-        console.log(`${Y}Saldo zero — já resgatado ou token não detido.${X}`);
+        console.log(`${Y}Saldo zero on-chain — já resgatado ou token não detido.${X}`);
         continue;
       }
     }
 
-    console.log(`${G}✔ Resolvido — indexSets vencedores: [${winningIndexSets.join(", ")}]${X}`);
+    console.log(`${G}✔ Token vencedor confirmado — indexSets: [${winningIndexSets.join(", ")}]${X}`);
 
     if (DRY_RUN) {
       console.log(`${Y}[DRY-RUN] Seria chamado: redeemPositions(${conditionId}, [${winningIndexSets}])${X}`);
