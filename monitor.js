@@ -250,12 +250,17 @@ function fetchAll() {
 
     let longPct = null, shortPct = null, regime = null, signal = null, timeLeft = null;
     if (csv) {
-      const u = Number(csv.model_up)   * 100;
-      const d = Number(csv.model_down) * 100;
+      // Suporta header novo (prob_model_up/down) e antigo (model_up/down)
+      const uRaw = csv.prob_model_up ?? csv.model_up;
+      const dRaw = csv.prob_model_down ?? csv.model_down;
+      const u = Number(uRaw) * 100;
+      const d = Number(dRaw) * 100;
       longPct  = Number.isFinite(u) ? u : null;
       shortPct = Number.isFinite(d) ? d : null;
-      regime   = csv.regime || null;
-      signal   = csv.signal || null;
+      // regime: campo removido no novo formato, usa decision_reason ou signal antigo
+      regime   = csv.regime || csv.decision_reason || null;
+      // signal: no novo formato é apenas "NO TRADE" ou ausente; usa side como indicador
+      signal   = csv.side ? `${csv.side}` : (csv.signal || null);
       const tl = Number(csv.time_left_min);
       timeLeft = Number.isFinite(tl) ? tl : null;
     }
