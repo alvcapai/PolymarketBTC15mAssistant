@@ -28,12 +28,8 @@ const SPIN_MS      = 180;
 const AGENTS = [
   { name: "btc-15m", timeframe: "btc-15m", csv: "logs/signals-btc-15m.csv",
     logs: ["logs/btc15m.log", "logs/btc15m-err.log"], errLog: "logs/btc15m-err.log", startLog: "logs/btc15m.log" },
-  { name: "btc-5m",  timeframe: "btc-5m",  csv: "logs/signals-btc-5m.csv",
-    logs: ["logs/btc5m.log",  "logs/btc5m-err.log"],  errLog: "logs/btc5m-err.log",  startLog: "logs/btc5m.log"  },
   { name: "eth-15m", timeframe: "eth-15m", csv: "logs/signals-eth-15m.csv",
     logs: ["logs/eth15m.log", "logs/eth15m-err.log"], errLog: "logs/eth15m-err.log", startLog: "logs/eth15m.log" },
-  { name: "eth-5m",  timeframe: "eth-5m",  csv: "logs/signals-eth-5m.csv",
-    logs: ["logs/eth5m.log",  "logs/eth5m-err.log"],  errLog: "logs/eth5m-err.log",  startLog: "logs/eth5m.log"  },
 ];
 
 const SPIN = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
