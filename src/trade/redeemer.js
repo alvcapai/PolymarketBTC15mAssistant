@@ -206,7 +206,13 @@ export async function runAutoRedeem() {
       );
       const tx = await redeemViaSafe(wallet, conditionId, indexSets);
       process.stderr.write(`\x1b[32m[REDEEM] Tx enviada: ${tx.hash}\x1b[0m\n`);
-      const receipt = await tx.wait(1);
+      const WAIT_TIMEOUT_MS = 2 * 60 * 1000;
+      const receipt = await Promise.race([
+        tx.wait(1),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`tx.wait timeout após ${WAIT_TIMEOUT_MS / 1000}s`)), WAIT_TIMEOUT_MS)
+        ),
+      ]);
       process.stderr.write(
         `\x1b[32m[REDEEM] ✔ Confirmada no bloco ${receipt.blockNumber}. USDC creditado na proxy.\x1b[0m\n`
       );
