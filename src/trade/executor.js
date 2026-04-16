@@ -326,7 +326,6 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
   const probabilityN = assertFinite(probability, "probability");
 
   if (usdcSize <= 0)            throw new Error("[executor] sizeUsdc deve ser > 0.");
-  if (usdcSize > 1.0)           throw new Error("[executor] GUARDRAIL: sizeUsdc não pode exceder $1.00.");
   if (price <= 0 || price >= 1) throw new Error("[executor] limitPrice deve estar entre 0 e 1 (exclusive).");
 
   // Arredondar para o tick mínimo do Polymarket (0.01 = 1 centavo)
@@ -337,10 +336,17 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
       `${ANSI.yellow}[executor] Preço ajustado para tick mínimo: ${price} → ${roundedPrice}${ANSI.reset}\n`
     );
   }
-  // Arredondar shares para CIMA com 2 casas decimais.
-  // Divisão simples pode gerar notional ligeiramente abaixo do mínimo ($1):
-  //   ex: 1.00 / 0.53 = 1.8867... → API computa $0.9964 → rejeita "min size: $1"
-  const shareSize = Math.ceil((usdcSize / roundedPrice) * 100) / 100;
+  // Polymarket exige mínimo de 5 shares por ordem. Garantimos que shareSize >= 5
+  // independente do tamanho em USDC solicitado. O custo efetivo pode ser ligeiramente
+  // maior que usdcSize quando o preço é alto (ex: 5 shares × 0.80 = $4.00).
+  const MIN_SHARES = 5;
+  const rawShares = Math.ceil((usdcSize / roundedPrice) * 100) / 100;
+  const shareSize = Math.max(rawShares, MIN_SHARES);
+  if (shareSize !== rawShares) {
+    process.stderr.write(
+      `${ANSI.yellow}[executor] shareSize ajustado para mínimo de ${MIN_SHARES} shares: ${rawShares} → ${shareSize} (custo efetivo: $${(shareSize * roundedPrice).toFixed(2)})${ANSI.reset}\n`
+    );
+  }
 
   // ── Mock Mode ────────────────────────────────────────────────────────────
   if (TRADE_MOCK) {
