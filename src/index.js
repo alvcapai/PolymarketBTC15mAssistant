@@ -49,6 +49,7 @@ applyGlobalProxyFromEnv();
 
 const tradedTokens = new Set();
 const tradedMarketSlugs = new Set();
+let isPlacingOrder = false;
 
 const ANSI = {
   reset: "\x1b[0m",
@@ -600,6 +601,8 @@ async function main() {
           process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — preco invalido (${rawPrice}).\x1b[0m\n`);
         } else if (!Number.isFinite(decision.stake) || decision.stake < MIN_TRADE_SIZE) {
           process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — stake invalida $${decision.stake}.\x1b[0m\n`);
+        } else if (isPlacingOrder) {
+          process.stderr.write(`\x1b[33m[AUTO-TRADE] Ordem em andamento, aguardando confirmação.\x1b[0m\n`);
         } else {
           const probabilityPct = decision.probModel * 100;
           const sideLabel = isUp ? "LONG" : "SHORT";
@@ -617,6 +620,7 @@ async function main() {
           );
 
           tradedTokens.add(targetTokenId);
+          isPlacingOrder = true;
           try {
             await executeTrade(
               targetTokenId,
@@ -672,6 +676,8 @@ async function main() {
             process.stderr.write(
               `\x1b[31m[AUTO-TRADE] FALHA na ordem ${sideLabel}: ${err?.message ?? String(err)}\x1b[0m\n`
             );
+          } finally {
+            isPlacingOrder = false;
           }
         }
       }
