@@ -1,5 +1,16 @@
 import "dotenv/config";
 import { CONFIG } from "./config.js";
+import {
+  createPrediction5mState,
+  createPrediction5mConfig,
+  scoreDirection5m,
+  evaluateEntry,
+  evaluateExit,
+  ExitReason,
+  sizeTrade,
+  circuitReset,
+  circuitRecordLoss,
+} from "./prediction5min/index.js";
 import { fetchKlines, fetchLastPrice } from "./data/binance.js";
 import { fetchChainlinkBtcUsd } from "./data/chainlink.js";
 import { startChainlinkPriceStream } from "./data/chainlinkWs.js";
@@ -30,7 +41,8 @@ import {
   recordOpenPosition,
   recordOutcomeByToken,
   formatDiagnostics,
-  MIN_TRADE_SIZE
+  MIN_TRADE_SIZE,
+  MAX_EXPOSURE_PCT,
 } from "./engines/risk-management.js";
 import { appendCsvRow, formatNumber, formatPct, getCandleWindowTiming, sleep } from "./utils.js";
 import { startBinanceTradeStream } from "./data/binanceWs.js";
@@ -38,6 +50,7 @@ import readline from "node:readline";
 import { applyGlobalProxyFromEnv } from "./net/proxy.js";
 import { executeTrade, fetchUsdcBalance, transferUsdc, WITHDRAWAL_ADDRESS } from "./trade/executor.js";
 import { runAutoRedeem } from "./trade/redeemer.js";
+import { recordMockEntry, checkMockOutcomes, mockPositionCount } from "./trade/mock-tracker.js";
 import {
   createTradeId,
   recordTradeOpen,
@@ -46,6 +59,9 @@ import {
 } from "./engines/trade-telemetry.js";
 
 applyGlobalProxyFromEnv();
+
+const is5m      = CONFIG.timeframe.endsWith("-5m");
+const isMockMode = String(process.env.TRADE_MOCK_MODE ?? "true").toLowerCase() === "true";
 
 const tradedTokens = new Set();
 const tradedMarketSlugs = new Set();
@@ -303,6 +319,9 @@ async function main() {
 
   const bankrollState = createBankrollState(20);
 
+  const pred5mState  = is5m ? createPrediction5mState()  : null;
+  const pred5mConfig = is5m ? createPrediction5mConfig() : null;
+
   let cachedBalance = null;
   let lastBalanceCheckMs = 0;
   let lastRedeemCheckMs = 0;
@@ -347,41 +366,56 @@ async function main() {
       const nowMs = Date.now();
       if (nowMs - lastRedeemCheckMs >= REDEEM_INTERVAL_MS) {
         lastRedeemCheckMs = nowMs;
-        const report = await runAutoRedeem();
-        const events = Array.isArray(report?.events) ? report.events : [];
-        for (const event of events) {
-          const outcome = recordOutcomeByToken(bankrollState, event.tokenId, event.won);
-          if (outcome.updated) {
-            const position = outcome.position ?? {};
-            const tradeId = String(position.tradeId ?? "").trim();
-            if (tradeId) {
-              const pnlRealized = estimatePnlRealized({
-                stake: position.stakeUsed ?? outcome.stakeUsed,
-                entryPrice: position.entryPrice,
-                shareSize: position.shareSize,
-                won: event.won
-              });
 
-              recordTradeClose({
-                trade_id: tradeId,
-                timestamp_close: new Date().toISOString(),
-                result: event.won ? "WIN" : "LOSS",
-                won: event.won ? 1 : 0,
-                close_reason: event.closeReason ?? event.source ?? (event.won ? "settled_win" : "settled_loss"),
-                redeemed: event.redeemed === true,
-                market_settlement_price: event.marketSettlementPrice ?? null,
-                bankroll_after: bankrollState.bankroll,
-                open_positions_after: bankrollState.openPositions,
-                total_exposure_after: bankrollState.totalExposure,
-                losing_streak_after: bankrollState.losingStreak,
-                pnl_realized: pnlRealized
-              });
+        if (isMockMode) {
+          // In mock mode: no real positions to redeem — check paper outcomes instead
+          await checkMockOutcomes({
+            csvPath:   CONFIG.mockCalibrationCsv,
+            upLabel:   CONFIG.polymarket.upOutcomeLabel,
+            downLabel: CONFIG.polymarket.downOutcomeLabel,
+          });
+        } else {
+          const report = await runAutoRedeem();
+          const events = Array.isArray(report?.events) ? report.events : [];
+          for (const event of events) {
+            const outcome = recordOutcomeByToken(bankrollState, event.tokenId, event.won);
+            if (outcome.updated) {
+              const position = outcome.position ?? {};
+              const tradeId = String(position.tradeId ?? "").trim();
+              if (tradeId) {
+                const pnlRealized = estimatePnlRealized({
+                  stake: position.stakeUsed ?? outcome.stakeUsed,
+                  entryPrice: position.entryPrice,
+                  shareSize: position.shareSize,
+                  won: event.won
+                });
+                recordTradeClose({
+                  trade_id: tradeId,
+                  timestamp_close: new Date().toISOString(),
+                  result: event.won ? "WIN" : "LOSS",
+                  won: event.won ? 1 : 0,
+                  close_reason: event.closeReason ?? event.source ?? (event.won ? "settled_win" : "settled_loss"),
+                  redeemed: event.redeemed === true,
+                  market_settlement_price: event.marketSettlementPrice ?? null,
+                  bankroll_after: bankrollState.bankroll,
+                  open_positions_after: bankrollState.openPositions,
+                  total_exposure_after: bankrollState.totalExposure,
+                  losing_streak_after: bankrollState.losingStreak,
+                  pnl_realized: pnlRealized
+                });
+              }
+
+              if (is5m && pred5mState) {
+                pred5mState.hasOpenPosition = bankrollState.openPositions > 0;
+                if (event.won) { circuitReset(pred5mState.circuitBreaker); }
+                else           { circuitRecordLoss(pred5mState.circuitBreaker); }
+              }
+
+              process.stderr.write(
+                `\x1b[35m[OUTCOME] ${event.won ? "WIN" : "LOSS"} token ${event.tokenId} | ` +
+                `stake $${outcome.stakeUsed.toFixed(2)} | losingStreak=${bankrollState.losingStreak}\x1b[0m\n`
+              );
             }
-
-            process.stderr.write(
-              `\x1b[35m[OUTCOME] ${event.won ? "WIN" : "LOSS"} token ${event.tokenId} | ` +
-              `stake $${outcome.stakeUsed.toFixed(2)} | losingStreak=${bankrollState.losingStreak}\x1b[0m\n`
-            );
           }
         }
       }
@@ -444,6 +478,17 @@ async function main() {
       const settlementLeftMin = settlementMs ? (settlementMs - Date.now()) / 60_000 : null;
       const timeLeftMin = settlementLeftMin ?? timing.remainingMinutes;
 
+      const marketSnapshot5m = is5m && poly.ok ? {
+        marketSlug: poly.market?.slug ?? "",
+        endDate:    settlementMs,
+        upPrice:    poly.prices.up   ?? null,
+        downPrice:  poly.prices.down ?? null,
+        upAsk:      poly.orderbook?.up?.bestAsk   ?? poly.prices.up   ?? null,
+        downAsk:    poly.orderbook?.down?.bestAsk ?? poly.prices.down ?? null,
+        upBid:      poly.orderbook?.up?.bestBid   ?? null,
+        downBid:    poly.orderbook?.down?.bestBid ?? null,
+      } : null;
+
       const closes = klines1m.map((c) => c.close);
       const vwapSeries = computeVwapSeries(klines1m);
       const vwapNow = vwapSeries[vwapSeries.length - 1];
@@ -472,6 +517,33 @@ async function main() {
         ? closes[closes.length - 1] < vwapNow && closes[closes.length - 2] > vwapSeries[vwapSeries.length - 2]
         : false;
 
+      // ── 5m-specific indicators (only computed when needed) ──────────────
+      let rsi5Now = null;
+      let rsiSlope5 = null;
+      let macd5 = null;
+      let scored5m = null;
+      if (is5m) {
+        rsi5Now = computeRsi(closes, 5);
+        const rsiSeries5 = [];
+        for (let i = 0; i < closes.length; i += 1) {
+          const r = computeRsi(closes.slice(0, i + 1), 5);
+          if (r !== null) rsiSeries5.push(r);
+        }
+        rsiSlope5 = slopeLast(rsiSeries5, 3);
+        macd5 = computeMacd(closes, 5, 13, 8);
+        const volumes = klines1m.map((c) => c.volume);
+        scored5m = scoreDirection5m({
+          closes,
+          volumes,
+          rsi5: rsi5Now,
+          rsiSlope5,
+          macd: macd5,
+          heikenColor: consec.color,
+          heikenCount: consec.count,
+        });
+      }
+
+      // ── 15m indicators (used by 15m bots and for display on 5m) ─────────
       const scored = scoreDirection({
         price: lastPrice,
         vwap: vwapNow,
@@ -497,14 +569,68 @@ async function main() {
       });
 
       const marketSlug = poly.ok ? String(poly.market?.slug ?? "") : "";
-      
-      const decision = decideEntry(bankrollState, {
-        probModelUp: calibrated.probModelUp,
-        probModelDown: calibrated.probModelDown,
-        marketProbUp: edge.marketUp,
-        marketProbDown: edge.marketDown,
-        marketSlug
-      });
+
+      if (is5m && pred5mState && marketSnapshot5m && pred5mState.hasOpenPosition) {
+        const openPos = [...bankrollState.positions.values()][0];
+        if (openPos) {
+          const posForExit = {
+            side:          openPos.side,
+            entryPrice:    openPos.entryPrice ?? 0,
+            shares:        openPos.shareSize  ?? 0,
+            contractSize:  (openPos.entryPrice ?? 0) * (openPos.shareSize ?? 0),
+            marketSlug:    openPos.marketSlug,
+            marketEndDate: openPos.marketEndDateMs ?? 0,
+          };
+          const exitDec = evaluateExit(pred5mState, posForExit, marketSnapshot5m, pred5mConfig, new Date());
+          if (exitDec.type === "exit") {
+            process.stderr.write(
+              `\x1b[33m[5M-EXIT] Saída recomendada: ${exitDec.reason} | token=${openPos.tokenId}\x1b[0m\n`
+            );
+          }
+        }
+      }
+
+      let decision;
+      if (is5m && pred5mState && marketSnapshot5m && scored5m) {
+        const entryDec = evaluateEntry(pred5mState, marketSnapshot5m, pred5mConfig, scored5m.rawUp, new Date());
+        if (entryDec.type === "enter") {
+          const stake      = sizeTrade(bankrollState.bankroll, entryDec.askPrice, pred5mConfig);
+          const maxExposure = bankrollState.bankroll * MAX_EXPOSURE_PCT;
+          const floorOk    = !floorCheck.cycleEnded;
+          const pauseOk    = !bankrollState.paused;
+          const exposureOk = (bankrollState.totalExposure + stake) <= maxExposure;
+          const stakeOk    = Number.isFinite(stake) && stake >= MIN_TRADE_SIZE;
+          if (floorOk && pauseOk && exposureOk && stakeOk) {
+            decision = {
+              canEnter:   true,
+              reason:     "pred5m_ok",
+              side:       entryDec.side,
+              probModel:  entryDec.probModel,
+              probMarket: entryDec.probMarket,
+              edge:       entryDec.edge,
+              edgeUp:     entryDec.edgeUp,
+              edgeDown:   entryDec.edgeDown,
+              stake,
+            };
+          } else {
+            const reason = !floorOk     ? "cycle_ended"
+              : !pauseOk    ? "paused_losing_streak_5"
+              : !exposureOk ? `exposure_${(bankrollState.totalExposure + stake).toFixed(2)}_exceeds_${maxExposure.toFixed(2)}`
+              :               `stake_${stake}_below_min_${MIN_TRADE_SIZE}`;
+            decision = { canEnter: false, reason, side: entryDec.side, probModel: entryDec.probModel, probMarket: entryDec.probMarket, edge: entryDec.edge, edgeUp: entryDec.edgeUp, edgeDown: entryDec.edgeDown, stake: 0 };
+          }
+        } else {
+          decision = { canEnter: false, reason: entryDec.reason, side: null, probModel: null, probMarket: null, edge: null, edgeUp: null, edgeDown: null, stake: 0 };
+        }
+      } else {
+        decision = decideEntry(bankrollState, {
+          probModelUp:   calibrated.probModelUp,
+          probModelDown: calibrated.probModelDown,
+          marketProbUp:  edge.marketUp,
+          marketProbDown: edge.marketDown,
+          marketSlug,
+        });
+      }
 
       const signal = toDecisionSignal(decision);
       process.stderr.write(`\x1b[36m[RISK] ${formatDiagnostics(bankrollState, decision)}\x1b[0m\n`);
@@ -520,20 +646,34 @@ async function main() {
         "",
         sepLine(),
         "",
-        kv("Model UP/DOWN:", `${formatProbPct(calibrated.probModelUp)} / ${formatProbPct(calibrated.probModelDown)}`),
-        kv("Market UP/DOWN:", `${formatProbPct(edge.marketUp)} / ${formatProbPct(edge.marketDown)}`),
-        kv("Edge UP/DOWN:", `${formatPct(edge.edgeUp, 2)} / ${formatPct(edge.edgeDown, 2)}`),
+        is5m
+          ? kv("Model UP/DOWN:", `${formatProbPct(decision.probModel && decision.side === "UP" ? decision.probModel : null)} / ${formatProbPct(decision.probModel && decision.side === "DOWN" ? decision.probModel : null)}`)
+          : kv("Model UP/DOWN:", `${formatProbPct(calibrated.probModelUp)} / ${formatProbPct(calibrated.probModelDown)}`),
+        is5m
+          ? kv("Market UP/DOWN:", `${formatProbPct(marketSnapshot5m?.upAsk)} / ${formatProbPct(marketSnapshot5m?.downAsk)}`)
+          : kv("Market UP/DOWN:", `${formatProbPct(edge.marketUp)} / ${formatProbPct(edge.marketDown)}`),
+        is5m
+          ? kv("Edge UP/DOWN:", `${formatPct(decision.edgeUp, 2)} / ${formatPct(decision.edgeDown, 2)}`)
+          : kv("Edge UP/DOWN:", `${formatPct(edge.edgeUp, 2)} / ${formatPct(edge.edgeDown, 2)}`),
         kv("Decision:", `${decisionColor}${signal}${ANSI.reset} (${decision.reason})`),
         kv("Stake:", decision.canEnter ? `$${decision.stake.toFixed(2)}` : "-"),
         "",
         sepLine(),
         "",
         kv("Heiken:", `${consec.color ?? "-"} x${consec.count}`),
-        kv("RSI:", `${formatNumber(rsiNow, 1)} | slope ${formatNumber(rsiSlope, 2)}`),
-        kv("MACD hist:", macd ? formatNumber(macd.hist, 4) : "-"),
+        is5m
+          ? kv("RSI(5):", `${formatNumber(rsi5Now, 1)} | slope ${formatNumber(rsiSlope5, 2)}`)
+          : kv("RSI(14):", `${formatNumber(rsiNow, 1)} | slope ${formatNumber(rsiSlope, 2)}`),
+        is5m
+          ? kv("MACD(5/13/8):", macd5 ? `hist ${formatNumber(macd5.hist, 4)} | Δ ${formatNumber(macd5.histDelta, 4)}` : "-")
+          : kv("MACD(12/26/9):", macd ? formatNumber(macd.hist, 4) : "-"),
         kv("VWAP:", `${formatNumber(vwapNow, 0)} (${formatPct(vwapDist, 2)})`),
-        kv("VWAP crosses:", vwapCrossCount ?? "-"),
-        kv("Volume 20/120:", `${formatNumber(volumeRecent, 0)} / ${formatNumber(volumeAvg, 0)}`),
+        is5m
+          ? kv("5m signal:", scored5m ? `rawUp=${formatNumber(scored5m.rawUp * 100, 1)}%` : "-")
+          : kv("VWAP crosses:", vwapCrossCount ?? "-"),
+        is5m
+          ? kv("Circuit breaker:", (() => { const cb = pred5mState.circuitBreaker; return `losses=${cb.consecutiveLosses}${cb.cooldownUntil && Date.now() < cb.cooldownUntil ? ` TRIPPED ${Math.ceil((cb.cooldownUntil - Date.now()) / 1000)}s` : " ok"}`; })())
+          : kv("Volume 20/120:", `${formatNumber(volumeRecent, 0)} / ${formatNumber(volumeAvg, 0)}`),
         "",
         sepLine(),
         "",
@@ -546,6 +686,9 @@ async function main() {
         "",
         sepLine(),
         kv("ET / Session:", `${fmtEtTime(new Date())} / ${getBtcSession(new Date())}`),
+        isMockMode
+          ? kv("Mode:", `${ANSI.yellow}MOCK CALIBRATION — paper=${mockPositionCount()} pending${ANSI.reset}`)
+          : kv("Mode:", `${ANSI.green}LIVE${ANSI.reset}`),
         centerText(`${ANSI.dim}${ANSI.gray}Polymarket Assistant [${CONFIG.timeframe}]${ANSI.reset}`, screenWidth())
       ];
 
@@ -601,21 +744,51 @@ async function main() {
           process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — preco invalido (${rawPrice}).\x1b[0m\n`);
         } else if (!Number.isFinite(decision.stake) || decision.stake < MIN_TRADE_SIZE) {
           process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — stake invalida $${decision.stake}.\x1b[0m\n`);
+        } else if (isMockMode) {
+          // ── MOCK / CALIBRATION MODE ────────────────────────────────────────
+          // No real order, no bankroll state change.
+          // Record paper position; outcome checked when market settles.
+          tradedTokens.add(targetTokenId);
+          tradedMarketSlugs.add(marketSlug);
+          const sideLabel = isUp ? "LONG" : "SHORT";
+          process.stderr.write(
+            `\x1b[35m[AUTO-TRADE] MOCK ${sideLabel} | ` +
+            `prob_model ${decision.probModel != null ? (decision.probModel * 100).toFixed(2) + "%" : "-"} | ` +
+            `prob_market ${decision.probMarket != null ? (decision.probMarket * 100).toFixed(2) + "%" : "-"} | ` +
+            `edge ${decision.edge != null ? (decision.edge * 100).toFixed(2) + "%" : "-"} | ` +
+            `stake $${decision.stake.toFixed(2)} | price ${targetPrice.toFixed(4)} | slug=${marketSlug}\x1b[0m\n`
+          );
+          recordMockEntry({
+            timeframe:   CONFIG.timeframe,
+            marketSlug,
+            side:        decision.side,
+            entryPrice:  targetPrice,
+            endDateMs:   settlementMs,
+            stake:       decision.stake,
+            probModel:   decision.probModel,
+            probMarket:  decision.probMarket,
+            edge:        decision.edge,
+            rawUp:       is5m ? scored5m?.rawUp : scored.rawUp,
+            timeLeftMin,
+            signals: is5m
+              ? { rsi5: rsi5Now, macdHist: macd5?.hist, macdDelta: macd5?.histDelta, heikenColor: consec.color, heikenCount: consec.count }
+              : { rsi: rsiNow, macdHist: macd?.hist, macdDelta: macd?.histDelta, heikenColor: consec.color, heikenCount: consec.count, vwapDist },
+          });
         } else if (isPlacingOrder) {
           process.stderr.write(`\x1b[33m[AUTO-TRADE] Ordem em andamento, aguardando confirmação.\x1b[0m\n`);
         } else {
-          const probabilityPct = decision.probModel * 100;
+          // ── REAL EXECUTION ────────────────────────────────────────────────
+          const probabilityPct = decision.probModel != null ? decision.probModel * 100 : 0;
           const sideLabel = isUp ? "LONG" : "SHORT";
-          const isMockMode = String(process.env.TRADE_MOCK_MODE ?? "true").toLowerCase() === "true";
-          const bankrollBefore = bankrollState.bankroll;
+          const bankrollBefore      = bankrollState.bankroll;
           const openPositionsBefore = bankrollState.openPositions;
           const totalExposureBefore = bankrollState.totalExposure;
-          const losingStreakBefore = bankrollState.losingStreak;
+          const losingStreakBefore  = bankrollState.losingStreak;
 
           process.stderr.write(
-            `\x1b[32m[AUTO-TRADE] DISPARANDO ${sideLabel}${isMockMode ? " [MOCK]" : " [REAL]"} | ` +
-            `prob_model ${probabilityPct.toFixed(2)}% | prob_market ${(decision.probMarket * 100).toFixed(2)}% | ` +
-            `edge ${(decision.edge * 100).toFixed(2)}% | stake $${decision.stake.toFixed(2)} | ` +
+            `\x1b[32m[AUTO-TRADE] DISPARANDO ${sideLabel} [REAL] | ` +
+            `prob_model ${probabilityPct.toFixed(2)}% | prob_market ${decision.probMarket != null ? (decision.probMarket * 100).toFixed(2) + "%" : "-"} | ` +
+            `edge ${decision.edge != null ? (decision.edge * 100).toFixed(2) + "%" : "-"} | stake $${decision.stake.toFixed(2)} | ` +
             `rawAsk ${rawPriceNum.toFixed(4)} + slippage ${slippage} = ${targetPrice.toFixed(2)} | token ${targetTokenId}\x1b[0m\n`
           );
 
@@ -630,7 +803,7 @@ async function main() {
               probabilityPct
             );
 
-            const tradeId = createTradeId();
+            const tradeId  = createTradeId();
             const shareSize = Math.ceil((decision.stake / targetPrice) * 100) / 100;
             tradedMarketSlugs.add(marketSlug);
             lastBalanceCheckMs = 0;
@@ -642,33 +815,35 @@ async function main() {
               tradeId,
               entryPrice: targetPrice,
               shareSize,
-              probModel: decision.probModel,
+              probModel:  decision.probModel,
               probMarket: decision.probMarket,
-              edge: decision.edge
+              edge:       decision.edge,
+              marketEndDateMs: settlementMs,
             });
+            if (is5m && pred5mState) pred5mState.hasOpenPosition = true;
 
             recordTradeOpen({
-              trade_id: tradeId,
-              timestamp_open: new Date().toISOString(),
-              market_slug: marketSlug,
-              market_type: marketTypeFromTimeframe(CONFIG.timeframe),
-              side: decision.side,
-              token_id: targetTokenId,
-              prob_modelo: decision.probModel,
-              prob_mercado: decision.probMarket,
-              edge: decision.edge,
-              stake: decision.stake,
-              entry_price: targetPrice,
-              adjusted_up: timeAware.adjustedUp,
-              raw_up: scored.rawUp,
+              trade_id:        tradeId,
+              timestamp_open:  new Date().toISOString(),
+              market_slug:     marketSlug,
+              market_type:     marketTypeFromTimeframe(CONFIG.timeframe),
+              side:            decision.side,
+              token_id:        targetTokenId,
+              prob_modelo:     decision.probModel,
+              prob_mercado:    decision.probMarket,
+              edge:            decision.edge,
+              stake:           decision.stake,
+              entry_price:     targetPrice,
+              adjusted_up:     timeAware.adjustedUp,
+              raw_up:          is5m ? scored5m?.rawUp : scored.rawUp,
               bankroll_before: bankrollBefore,
               open_positions_before: openPositionsBefore,
               total_exposure_before: totalExposureBefore,
-              losing_streak_before: losingStreakBefore,
-              cycle_number: bankrollState.cycleNumber,
+              losing_streak_before:  losingStreakBefore,
+              cycle_number:    bankrollState.cycleNumber,
               decision_reason: decision.reason,
-              time_left_min: timeLeftMin,
-              model_version: MODEL_VERSION
+              time_left_min:   timeLeftMin,
+              model_version:   MODEL_VERSION
             });
             process.stderr.write(`\x1b[32m[AUTO-TRADE] Ordem confirmada pela API (${marketSlug}).\x1b[0m\n`);
           } catch (err) {
