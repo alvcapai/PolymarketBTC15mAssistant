@@ -1,7 +1,7 @@
 export const MIN_EDGE = 0.05;
 export const MAX_EDGE = 0.50;
-export const MIN_PROB = 0.52;
-export const MIN_MARKET_PROB = 0.15;
+export const MIN_PROB = 0.60;
+export const MIN_MARKET_PROB = 0.25;
 export const MAX_STAKE = 4.25;
 export const MAX_POSITIONS = 2;
 export const MAX_EXPOSURE_PCT = 0.35;
