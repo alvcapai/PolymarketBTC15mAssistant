@@ -1,10 +1,10 @@
 export const MIN_EDGE = 0.05;
 export const MAX_EDGE = 0.50;
 export const MIN_PROB = 0.65;
-export const MIN_MARKET_PROB = 0.30;
+export const MIN_MARKET_PROB = 0.40;
 export const MAX_STAKE = 1.00;
 export const MAX_POSITIONS = 1;
-export const MAX_EXPOSURE_PCT = 0.25;
+export const MAX_EXPOSURE_PCT = 1.0;
 export const WITHDRAWAL_TRIGGER = 150;
 export const WITHDRAWAL_AMOUNT = 100;
 export const BANKROLL_RESET_TO = 50;
