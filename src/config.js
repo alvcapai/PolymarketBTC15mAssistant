@@ -65,8 +65,9 @@ export const CONFIG = {
   macdSlow:    26,
   macdSignal:  9,
 
-  // CSV log path — one file per mode
-  signalsCsv: `./logs/signals-${ASSET}-${WINDOW}.csv`,
+  // CSV log paths — one file per mode
+  signalsCsv:        `./logs/signals-${ASSET}-${WINDOW}.csv`,
+  bankrollStatePath: `./logs/bankroll-${ASSET}-${WINDOW}.json`,
 
   polymarket: {
     marketSlug:      process.env.POLYMARKET_SLUG || "",

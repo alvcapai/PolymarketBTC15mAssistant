@@ -32,6 +32,7 @@ import {
   formatDiagnostics,
   MIN_TRADE_SIZE
 } from "./engines/risk-management.js";
+import { saveBankrollState, loadBankrollState } from "./engines/bankroll-persist.js";
 import { appendCsvRow, formatNumber, formatPct, getCandleWindowTiming, sleep } from "./utils.js";
 import { startBinanceTradeStream } from "./data/binanceWs.js";
 import readline from "node:readline";
@@ -341,7 +342,7 @@ async function main() {
     aggregator: CONFIG.chainlink.assetUsdAggregator
   });
 
-  const bankrollState = createBankrollState(20);
+  const bankrollState = loadBankrollState(CONFIG.bankrollStatePath, 20);
 
   let cachedBalance = null;
   let lastBalanceCheckMs = 0;
@@ -351,6 +352,19 @@ async function main() {
   let prevCurrentPrice = null;
   let isWithdrawing = false;
   let wasCycleEnded = false;
+  let lastPersistMs = 0;
+  const PERSIST_INTERVAL_MS = 60_000;
+  function persistIfDue() {
+    const now = Date.now();
+    if (now - lastPersistMs >= PERSIST_INTERVAL_MS) {
+      lastPersistMs = now;
+      saveBankrollState(bankrollState, CONFIG.bankrollStatePath);
+    }
+  }
+  function persistNow() {
+    lastPersistMs = Date.now();
+    saveBankrollState(bankrollState, CONFIG.bankrollStatePath);
+  }
 
   async function refreshBalance() {
     const now = Date.now();
@@ -390,10 +404,12 @@ async function main() {
         lastRedeemCheckMs = nowMs;
         const report = await runAutoRedeem();
         processOutcomeEvents(bankrollState, Array.isArray(report?.events) ? report.events : []);
+        if ((report?.events?.length ?? 0) > 0) persistNow();
       }
 
       const currentBalance = await refreshBalance();
       syncBankroll(bankrollState, currentBalance);
+      persistIfDue();
 
       const floorCheck = checkCycleFloor(bankrollState);
       if (floorCheck.cycleEnded && !wasCycleEnded) {
@@ -416,6 +432,7 @@ async function main() {
           recordWithdrawal(bankrollState);
           cachedBalance = resetTo;
           lastBalanceCheckMs = Date.now();
+          persistNow();
           process.stderr.write(
             `\x1b[32m[SAQUE] Concluido. Tx: ${result.txHash ?? "(mock)"} | novo ciclo=${bankrollState.cycleNumber}\x1b[0m\n`
           );
@@ -658,6 +675,7 @@ async function main() {
               probMarket: decision.probMarket,
               edge: decision.edge
             });
+            persistNow();
 
             recordTradeOpen({
               trade_id: tradeId,
