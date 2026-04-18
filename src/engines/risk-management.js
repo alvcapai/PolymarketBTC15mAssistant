@@ -11,8 +11,8 @@ export const BANKROLL_RESET_TO = 50;
 export const MIN_TRADE_SIZE = 1.0;
 
 const CYCLE_FLOOR = {
-  initial: 5,
-  recurring: 10
+  initial: 0,
+  recurring: 0
 };
 
 function recalcExposure(state) {
