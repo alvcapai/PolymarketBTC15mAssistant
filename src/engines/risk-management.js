@@ -118,6 +118,11 @@ export function decideEntry(state, {
   marketProbDown,
   marketSlug
 }) {
+  // Re-evaluate floor on every entry attempt so cycleEnded is always
+  // coherent with the current bankroll, regardless of when checkCycleFloor
+  // was last called in the main loop.
+  checkCycleFloor(state);
+
   const modelUp = toFiniteOrNull(probModelUp);
   const modelDown = toFiniteOrNull(probModelDown);
   const mktUp = toFiniteOrNull(marketProbUp);
