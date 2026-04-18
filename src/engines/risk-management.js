@@ -1,10 +1,10 @@
 export const MIN_EDGE = 0.05;
 export const MAX_EDGE = 0.50;
-export const MIN_PROB = 0.60;
-export const MIN_MARKET_PROB = 0.25;
-export const MAX_STAKE = 4.25;
+export const MIN_PROB = 0.65;
+export const MIN_MARKET_PROB = 0.30;
+export const MAX_STAKE = 2.00;
 export const MAX_POSITIONS = 2;
-export const MAX_EXPOSURE_PCT = 0.35;
+export const MAX_EXPOSURE_PCT = 0.25;
 export const WITHDRAWAL_TRIGGER = 150;
 export const WITHDRAWAL_AMOUNT = 100;
 export const BANKROLL_RESET_TO = 50;
@@ -94,7 +94,7 @@ export function edgeMultiplier(edge) {
 
 export function stakeBase(bankroll) {
   if (!Number.isFinite(bankroll) || bankroll <= 0) return MIN_TRADE_SIZE;
-  const pct = bankroll < 50 ? 0.2 : 0.25;
+  const pct = bankroll < 50 ? 0.12 : 0.15;
   return Math.max(bankroll * pct, MIN_TRADE_SIZE);
 }
 
