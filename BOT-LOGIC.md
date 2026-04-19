@@ -1,5 +1,18 @@
 # Bot Logic — Decision Making, Indicators & Guardrails
 
+> **SUPERSEDED** — This document reflects the system as of 2026-04-18.
+> After the 2026-04-19 bug-fix + structural refactor, the authoritative
+> reference is **[docs/CURRENT-SYSTEM.md](docs/CURRENT-SYSTEM.md)**.
+>
+> Key changes not reflected below:
+> - Calibration: non-monotonic lookup → Platt logistic (Bug 1)
+> - Stake sizing: gate #10.5 min-shares check added (Bug 2)
+> - Edge: `netEdge = rawEdge − fees − slippage`; `MIN_NET_EDGE = 0.03` (Bug 3)
+> - Take-profit: dynamic threshold replaces fixed 50%; stop-loss added (Imp 4)
+> - Chainlink used as TA anchor; basis stddev widens VWAP margin (Imp 5)
+> - `MAX_STAKE`: dynamic `min(bankroll × 5%, $10)` replaces `$1.00` (Imp 6)
+> - Counterfactual CSV logged every cycle for calibration data (Imp 7)
+
 Complete reference for how the BTC-15m and ETH-15m bots evaluate signals, decide to trade, and manage risk.
 
 ---
