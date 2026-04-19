@@ -11,6 +11,9 @@ export const BANKROLL_RESET_TO = 50;
 export const MIN_TRADE_SIZE = 1.0;
 export const SESSION_CEILING = 25.0;
 
+const MIN_SHARES = 5;            // Polymarket minimum share size
+const TRADE_SLIPPAGE_DEFAULT = 0.01;
+
 const CYCLE_FLOOR = {
   initial: 15,
   recurring: 15
@@ -116,7 +119,10 @@ export function decideEntry(state, {
   probModelDown,
   marketProbUp,
   marketProbDown,
-  marketSlug
+  marketSlug,
+  priceUp = null,
+  priceDown = null,
+  slippage = TRADE_SLIPPAGE_DEFAULT
 }) {
   // Re-evaluate floor on every entry attempt so cycleEnded is always
   // coherent with the current bankroll, regardless of when checkCycleFloor
@@ -148,7 +154,7 @@ export function decideEntry(state, {
   const probModel = side === "UP" ? modelUp : modelDown;
   const probMarket = side === "UP" ? mktUp : mktDown;
   const edge = side === "UP" ? edgeUp : edgeDown;
-  const stake = computeStake(state, edge);
+  let stake = computeStake(state, edge);
 
   if (state.cycleEnded) {
     return { canEnter: false, reason: "cycle_ended", side, probModel, probMarket, edge, edgeUp, edgeDown, stake: 0 };
@@ -233,6 +239,23 @@ export function decideEntry(state, {
       stake: 0
     };
   }
+  // Gate #10.5: minimum shares feasibility — block before sending a doomed order.
+  // Polymarket rejects orders where shares < 5. At high prices this requires
+  // a stake above our cap, so we detect and block here rather than letting the
+  // API return "Size lower than minimum: 5".
+  const tokenPrice = toFiniteOrNull(side === "UP" ? priceUp : priceDown);
+  if (tokenPrice !== null && tokenPrice > 0) {
+    const minViableStake = MIN_SHARES * tokenPrice * (1 + slippage);
+    if (minViableStake > MAX_STAKE) {
+      return {
+        canEnter: false,
+        reason: `price_${tokenPrice.toFixed(3)}_requires_${minViableStake.toFixed(2)}_above_max_stake_${MAX_STAKE}`,
+        side, probModel, probMarket, edge, edgeUp, edgeDown, stake: 0
+      };
+    }
+    stake = Math.min(Math.max(stake, minViableStake, MIN_TRADE_SIZE), MAX_STAKE);
+  }
+
   if (!Number.isFinite(stake) || stake < MIN_TRADE_SIZE) {
     return {
       canEnter: false,

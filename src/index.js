@@ -526,13 +526,19 @@ async function main() {
       });
 
       const marketSlug = poly.ok ? String(poly.market?.slug ?? "") : "";
-      
+      const rawPriceUp = poly.ok ? (poly.orderbook.up.bestAsk ?? poly.prices.up) : null;
+      const rawPriceDown = poly.ok ? (poly.orderbook.down.bestAsk ?? poly.prices.down) : null;
+      const tradeSlippage = Math.abs(Number(process.env.TRADE_SLIPPAGE ?? 0.01));
+
       const decision = decideEntry(bankrollState, {
         probModelUp: calibrated.probModelUp,
         probModelDown: calibrated.probModelDown,
         marketProbUp: edge.marketUp,
         marketProbDown: edge.marketDown,
-        marketSlug
+        marketSlug,
+        priceUp: rawPriceUp,
+        priceDown: rawPriceDown,
+        slippage: tradeSlippage
       });
 
       const signal = toDecisionSignal(decision);
@@ -613,13 +619,10 @@ async function main() {
       } else {
         const isUp = decision.side === "UP";
         const targetTokenId = isUp ? poly.tokens.upTokenId : poly.tokens.downTokenId;
-        const rawPrice = isUp
-          ? (poly.orderbook.up.bestAsk ?? poly.prices.up)
-          : (poly.orderbook.down.bestAsk ?? poly.prices.down);
-        const slippage = Math.abs(Number(process.env.TRADE_SLIPPAGE ?? 0.01));
+        const rawPrice = isUp ? rawPriceUp : rawPriceDown;
         const rawPriceNum = Number(rawPrice);
         const targetPrice = Number.isFinite(rawPriceNum)
-          ? Math.min(Math.round((rawPriceNum + slippage) * 100) / 100, 0.97)
+          ? Math.min(Math.round((rawPriceNum + tradeSlippage) * 100) / 100, 0.97)
           : rawPriceNum;
 
         if (!targetTokenId) {
