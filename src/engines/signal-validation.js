@@ -33,17 +33,17 @@ function clamp01(x) {
  */
 
 // Platt-style logistic calibration — monotonically shrinks toward 0.5.
-// a = 1.5 is a conservative prior. TODO: refit once 500+ labeled trades are collected.
+// a = 6.0 matches standard Platt notation: calibratedUp = sigmoid(a * (rawUp - 0.5)).
+// TODO: refit once 500+ labeled trades are collected.
 export function calibrateModelProbabilities(rawUp) {
   const up = clamp01(Number(rawUp));
   if (up === null) {
     return { probModelUp: null, probModelDown: null };
   }
 
-  // a = 1.5 — TUNABLE AFTER DATA COLLECTION
-  const a = 1.5;
-  const logit = a * (up - 0.5);
-  const calibratedUp = 1 / (1 + Math.exp(-logit * 4));
+  // a = 6.0 — TUNABLE AFTER DATA COLLECTION
+  const a = 6.0;
+  const calibratedUp = 1 / (1 + Math.exp(-a * (up - 0.5)));
 
   return {
     probModelUp: calibratedUp,
