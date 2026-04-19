@@ -14,6 +14,7 @@ export const MIN_TRADE_SIZE = 1.0;
 export const SESSION_CEILING = 25.0;
 
 const MIN_SHARES = 5;            // Polymarket minimum share size
+const BANKROLL_RISK_CAP = 0.15;    // max 15% of bankroll per trade
 const TRADE_SLIPPAGE_DEFAULT = 0.01;
 
 const CYCLE_FLOOR = {
@@ -259,22 +260,22 @@ export function decideEntry(state, {
       stake: 0
     };
   }
-  // Gate #10.5: minimum shares feasibility — block before sending a doomed order.
-  // Polymarket rejects orders where shares < 5. At high prices this requires
-  // a stake above our cap, so we detect and block here rather than letting the
-  // API return "Size lower than minimum: 5".
-  const maxStakeNow = computeMaxStake(state.bankroll);
+  // Gate #10.5: three-way stake decision
+  // 1. Compute the minimum viable stake (MIN_SHARES platform minimum).
+  // 2. If that minimum exceeds our risk cap (15% bankroll), skip the trade.
+  // 3. Otherwise use max(kellyStake, minViable) capped at riskCap.
+  const riskCap = state.bankroll * BANKROLL_RISK_CAP;
   const tokenPrice = toFiniteOrNull(side === "UP" ? priceUp : priceDown);
   if (tokenPrice !== null && tokenPrice > 0) {
     const minViableStake = MIN_SHARES * tokenPrice * (1 + slippage);
-    if (minViableStake > maxStakeNow) {
+    if (minViableStake > riskCap) {
       return {
         canEnter: false,
-        reason: `price_${tokenPrice.toFixed(3)}_requires_${minViableStake.toFixed(2)}_above_max_stake_${maxStakeNow.toFixed(2)}`,
+        reason: `min_ticket_${minViableStake.toFixed(2)}_exceeds_risk_cap_${riskCap.toFixed(2)}_bankroll_${state.bankroll.toFixed(2)}`,
         side, probModel, probMarket, edge: netEdge, rawEdge, edgeUp, edgeDown, stake: 0
       };
     }
-    stake = Math.min(Math.max(stake, minViableStake, MIN_TRADE_SIZE), maxStakeNow);
+    stake = Math.min(Math.max(stake, minViableStake), riskCap);
   }
 
   if (!Number.isFinite(stake) || stake < MIN_TRADE_SIZE) {
