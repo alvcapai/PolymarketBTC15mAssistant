@@ -9,7 +9,8 @@
     "start:btc5m":  "TIMEFRAME=btc-5m  node src/index.js",
     "start:eth15m": "TIMEFRAME=eth-15m node src/index.js",
     "start:eth5m":  "TIMEFRAME=eth-5m  node src/index.js",
-    "analyze:trades": "node scripts/analyze-trades.js"
+    "analyze:trades": "node scripts/analyze-trades.js",
+    "test": "node --test jobs/health-check.test.js"
   },
   "dependencies": {
     "@polymarket/clob-client": "^2.8.0",
