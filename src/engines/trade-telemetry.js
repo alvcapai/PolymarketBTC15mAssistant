@@ -65,10 +65,10 @@ const BLOCK_REPORT_EVERY = 100;
  */
 function _normalizeBlockReason(reason) {
   return reason
-    .replace(/_(-?[\d.]+)(?=_[a-z])/g, )  // strip _<number> before a word segment
-    .replace(/_bankroll_[\d.]+$/, )         // strip trailing _bankroll_X.XX
-    .replace(/__+/g, _)
-    .replace(/_+$/, );
+    .replace(/_(-?[\d.]+)(?=_[a-z])/g, "")  // strip _<number> before a word segment
+    .replace(/_bankroll_[\d.]+$/, "")         // strip trailing _bankroll_X.XX
+    .replace(/__+/g, "_")
+    .replace(/_+$/, "");
 }
 
 export function recordBlockReason(reason) {
@@ -90,5 +90,5 @@ function _flushBlockReport() {
   }
   _blockTicks = 0;
   _blockCounts.clear();
-  return lines.join(n);
+  return lines.join("\n");
 }
