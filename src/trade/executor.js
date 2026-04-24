@@ -13,7 +13,7 @@ function ensureLegacyTypedDataSigner(signer) {
   if (typeof signer?._signTypedData === "function") return signer;
   if (typeof signer?.signTypedData !== "function") return signer;
 
-  signer._signTypedData = signer.signTypedData.bind(signer);
+  signer._signTypedData = (...args) => signer.signTypedData(...args);
   process.stderr.write(
     "\x1b[33m[executor] Shim signer._signTypedData injetado na instância (ethers v5→v6).\x1b[0m\n"
   );

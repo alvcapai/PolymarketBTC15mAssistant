@@ -11,7 +11,7 @@ export const WITHDRAWAL_TRIGGER = 150;
 export const WITHDRAWAL_AMOUNT = 100;
 export const BANKROLL_RESET_TO = 50;
 export const MIN_TRADE_SIZE = 1.0;
-export const SESSION_CEILING = 25.0;
+export const SESSION_CEILING = 50.0;
 
 const MIN_SHARES = 5;            // Polymarket minimum share size
 const BANKROLL_RISK_CAP = 0.15;    // max 15% of bankroll per trade
