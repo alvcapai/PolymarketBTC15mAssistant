@@ -138,3 +138,30 @@ ou pelo Ethers.js** — só funcionam porque `proxy.js` as lê manualmente.
 | Mullvad VPN | Exit nodes no Paraguai / Suíça (necessário para Polymarket) |
 | Tailscale | Acesso SSH de gestão — IP `100.x.x.x` — bypass obrigatório |
 | PM2 | Process manager dos agentes Node.js (ver `OPERACOES.md`) |
+
+---
+
+## 7. Guia Operacional para Agentes de Código
+
+### Localização e Workspace
+- **Project Root:** `/root/workspace/PolymarketBTC15mAssistant`
+- **Logs:** `./logs/*.log` e `./logs/*.json` (estado do bankroll)
+- **Configurações:** `./.env` (Contém PK e chaves de API L2)
+
+### Gestão de Processos (PM2)
+Os bots rodam sob o PM2. Comandos essenciais:
+- Ver status: `pm2 status`
+- Ver logs em tempo real: `pm2 logs`
+- Reiniciar bots após mudanças: `pm2 restart all` (ou `pm2 restart btc-15m`)
+- Limpar ambiente e reiniciar: `pm2 restart all --update-env`
+
+### Fluxo de Debugging de Autenticação
+Se encontrar o erro `order_version_mismatch` ou `401 Unauthorized`:
+1. Verifique se o relógio está sincronizado: `timedatectl status`.
+2. Rode o script de teste de chaves: `node smoketest.js`.
+3. Se falhar, regenere as chaves: `node keygen.js`.
+4. Reinicie os bots: `pm2 restart all`.
+
+### Segurança de Acesso
+- **SSH:** Sempre utilize o IP do Tailscale (`100.70.219.110`) para evitar bloqueios de firewall ou falhas de rota da VPN Mullvad.
+- **Ambiente:** O Node.js deve ser a versão v20 ou superior (`nvm use 20`).
