@@ -1,6 +1,7 @@
 import { writeFile, readFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createBankrollState } from "./risk-management.js";
+import { logger } from "../logging/logger.js";
 
 /**
  * Persists bankroll state to disk (async, non-blocking).
@@ -23,7 +24,7 @@ export function saveBankrollState(state, filePath) {
   };
   writeFile(filePath, JSON.stringify(data, null, 2), (err) => {
     if (err) {
-      process.stderr.write(`\x1b[31m[PERSIST] Falha ao salvar estado: ${err.message}\x1b[0m\n`);
+      logger.error({ component: "persist", err: err.message }, "Failed to save bankroll state");
     }
   });
 }
@@ -51,17 +52,15 @@ export function loadBankrollState(filePath, initialBankroll = 20) {
       state.positions = new Map(data.positions);
     }
 
-    process.stderr.write(
-      `\x1b[36m[PERSIST] Estado carregado de ${filePath}: ` +
-      `bankroll=$${state.bankroll.toFixed(2)} | cycle=${state.cycleNumber} | ` +
-      `streak=${state.losingStreak} | positions=${state.positions.size} | ` +
-      `salvo em ${data.savedAt ?? "?"}\x1b[0m\n`
-    );
+    logger.info({
+      component: "persist", filePath,
+      bankroll: state.bankroll, cycle: state.cycleNumber,
+      streak: state.losingStreak, positions: state.positions.size,
+      savedAt: data.savedAt,
+    }, "Bankroll state loaded");
     return state;
   } catch {
-    process.stderr.write(
-      `\x1b[33m[PERSIST] Sem estado salvo (${filePath}) — iniciando com bankroll=$${initialBankroll}\x1b[0m\n`
-    );
+    logger.warn({ component: "persist", filePath, initialBankroll }, "No saved state — starting fresh");
     return createBankrollState(initialBankroll);
   }
 }

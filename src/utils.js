@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { logger } from "./logging/logger.js";
 
 export function clamp(x, min, max) {
   return Math.max(min, Math.min(max, x));
@@ -57,10 +58,9 @@ export function appendCsvRow(filePath, header, row) {
     })
     .join(",");
 
-  if (!exists) {
-    fs.writeFileSync(filePath, `${header.join(",")}\n${line}\n`, "utf8");
-    return;
-  }
-
-  fs.appendFileSync(filePath, `${line}\n`, "utf8");
+  const content = exists ? `${line}\n` : `${header.join(",")}\n${line}\n`;
+  const flags = exists ? "a" : "w";
+  fs.writeFile(filePath, content, { encoding: "utf8", flag: flags }, (err) => {
+    if (err) logger.error({ component: "csv", filePath, err: err.message }, "Failed to write CSV row");
+  });
 }

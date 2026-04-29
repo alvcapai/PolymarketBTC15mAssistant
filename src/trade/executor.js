@@ -5,16 +5,7 @@ import { ClobClient, OrderType, Side } from "@polymarket/clob-client-v2";
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { CONFIG } from "../config.js";
-
-// ─── Constants ───────────────────────────────────────────────────────────────
-
-const ANSI = {
-  reset:   "\x1b[0m",
-  red:     "\x1b[31m",
-  green:   "\x1b[32m",
-  yellow:  "\x1b[33m",
-  bold:    "\x1b[1m",
-};
+import { logger } from "../logging/logger.js";
 
 const CLOB_HOST      = process.env.POLYMARKET_CLOB_HOST || "https://clob.polymarket.com";
 const CHAIN_ID       = 137; // Polygon mainnet (number for v2 SDK)
@@ -119,10 +110,7 @@ async function ensureBalanceAllowance() {
   try {
     await clobClient.updateBalanceAllowance({ asset_type: "COLLATERAL" });
   } catch (err) {
-    // Non-fatal: the order may still succeed if already activated
-    process.stderr.write(
-      `${ANSI.yellow}[executor] updateBalanceAllowance falhou (não-fatal): ${err?.message}${ANSI.reset}\n`
-    );
+    logger.warn({ err: err?.message, component: "executor" }, "updateBalanceAllowance failed (non-fatal)");
   }
 }
 
@@ -188,12 +176,9 @@ if (!TRADE_MOCK) {
     funderAddress: PROXY_ADDRESS || undefined,
   });
 
-  console.log(
-    `${ANSI.green}[executor] ClobClient V2 inicializado (modo real, sig type ${SIGNATURE_TYPE}` +
-    `${PROXY_ADDRESS ? `, funder ${PROXY_ADDRESS}` : ""}).${ANSI.reset}`
-  );
+  logger.info({ component: "executor", signatureType: SIGNATURE_TYPE, funder: PROXY_ADDRESS || undefined }, "ClobClient V2 initialized (real mode)");
 } else {
-  console.log(`${ANSI.yellow}[executor] TRADE_MOCK_MODE ativo — nenhuma ordem real será enviada.${ANSI.reset}`);
+  logger.info({ component: "executor", mock: true }, "TRADE_MOCK_MODE active — no real orders will be sent");
 }
 
 // ─── HMAC helper (para consulta de saldo via API raw) ─────────────────────────
@@ -257,9 +242,7 @@ export async function fetchUsdcBalance() {
  */
 export async function transferUsdc(toAddress, amountUsdc) {
   if (TRADE_MOCK) {
-    console.log(
-      `${ANSI.yellow}[MOCK SAQUE] $${amountUsdc.toFixed(2)} USDC → ${toAddress}${ANSI.reset}`
-    );
+    logger.info({ component: "executor", action: "WITHDRAW", mock: true, amount: amountUsdc, to: toAddress }, "Mock withdrawal");
     return { success: true, mock: true };
   }
 
@@ -275,7 +258,7 @@ export async function transferUsdc(toAddress, amountUsdc) {
   if (SIGNATURE_TYPE !== 2 || !PROXY_ADDRESS) {
     const usdc = new Contract(USDC_ADDRESS, ERC20_ABI, signerWallet);
     const tx   = await usdc.transfer(toAddress, amount);
-    console.log(`${ANSI.green}[SAQUE] Tx enviada: ${tx.hash}${ANSI.reset}`);
+    logger.info({ component: "executor", action: "WITHDRAW", txHash: tx.hash }, "Withdrawal tx sent");
     const receipt = await tx.wait(1);
     return { success: true, txHash: receipt.hash };
   }
@@ -315,7 +298,7 @@ export async function transferUsdc(toAddress, amountUsdc) {
     signature,
   );
 
-  console.log(`${ANSI.green}[SAQUE] execTransaction enviada: ${tx.hash}${ANSI.reset}`);
+  logger.info({ component: "executor", action: "WITHDRAW", txHash: tx.hash }, "Safe execTransaction sent");
   const receipt = await tx.wait(1);
   return { success: true, txHash: receipt.hash };
 }
@@ -350,29 +333,19 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
   // Arredondar para o tick mínimo do Polymarket (0.01 = 1 centavo)
   const roundedPrice = Math.round(price * 100) / 100;
   if (roundedPrice !== price) {
-    process.stderr.write(
-      `${ANSI.yellow}[executor] Preço ajustado para tick mínimo: ${price} → ${roundedPrice}${ANSI.reset}\n`
-    );
+    logger.info({ component: "executor", from: price, to: roundedPrice }, "Price rounded to tick");
   }
   // Arredondar shares para CIMA com 2 casas decimais.
   const shareSize = Math.ceil((usdcSize / roundedPrice) * 100) / 100;
 
   // ── Mock Mode ────────────────────────────────────────────────────────────
   if (TRADE_MOCK) {
-    process.stderr.write(
-      `${ANSI.yellow}[MOCK EXECUCAO] Apostando $${usdcSize.toFixed(2)} em ${Side.BUY}` +
-      ` no Token ${tokenId} a ${formatCents(price)}` +
-      ` (Probabilidade: ${probabilityN.toFixed(2)}%)${ANSI.reset}\n`
-    );
+    logger.info({ component: "executor", action: "BUY", mock: true, tokenId, usdcSize, shareSize, price, probability: probabilityN }, "Mock order placed");
     return { success: true, mock: true, tokenId, side: Side.BUY, usdcSize, shareSize, price, probability: probabilityN };
   }
 
   // ── Modo Real (CLOB V2) ─────────────────────────────────────────────────
-  process.stderr.write(
-    `${ANSI.green}[EXECUCAO] Apostando $${usdcSize.toFixed(2)} em ${Side.BUY}` +
-    ` no Token ${tokenId} a ${formatCents(price)}` +
-    ` (Probabilidade: ${probabilityN.toFixed(2)}%)${ANSI.reset}\n`
-  );
+  logger.info({ component: "executor", action: "BUY", tokenId, usdcSize, shareSize, price, probability: probabilityN }, "Placing real order");
 
   // Sync on-chain allowance with CLOB ("Activate Funds")
   await ensureBalanceAllowance();
@@ -391,32 +364,23 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
       OrderType.GTC,
     );
   } catch (err) {
-    const detail = err?.message ?? String(err);
-    process.stderr.write(`${ANSI.red}[EXECUCAO] Exceção ao enviar ordem: ${detail}${ANSI.reset}\n`);
+    logger.error({ component: "executor", err: err?.message }, "Exception sending BUY order");
     throw err;
   }
 
-  // Detectar rejeição silenciosa da API (retorno { error: ... } sem throw)
   if (response && typeof response === "object" && ("error" in response || "errorCode" in response)) {
     const apiError = response.error ?? response.errorCode ?? JSON.stringify(response);
     const detail = typeof apiError === "object" ? JSON.stringify(apiError) : String(apiError);
-    process.stderr.write(
-      `${ANSI.red}[EXECUCAO] API rejeitou a ordem — resposta completa: ${JSON.stringify(response)}${ANSI.reset}\n`
-    );
+    logger.error({ component: "executor", response }, "API rejected BUY order");
     throw new Error(`[executor] API rejeitou a ordem: ${detail}`);
   }
 
-  // Verificar se a resposta tem o shape esperado de uma ordem aceita
   if (!response || typeof response !== "object") {
-    process.stderr.write(
-      `${ANSI.red}[EXECUCAO] Resposta inesperada da API: ${JSON.stringify(response)}${ANSI.reset}\n`
-    );
+    logger.error({ component: "executor", response }, "Unexpected API response for BUY order");
     throw new Error(`[executor] Resposta inesperada da API: ${JSON.stringify(response)}`);
   }
 
-  process.stderr.write(
-    `${ANSI.green}[EXECUCAO] Ordem aceita pela API. Resposta: ${JSON.stringify(response)}${ANSI.reset}\n`
-  );
+  logger.info({ component: "executor", response }, "BUY order accepted");
   return response;
 }
 
@@ -440,25 +404,17 @@ export async function executeSell(tokenId, shareSize, limitPrice) {
 
   const roundedPrice = Math.round(price * 100) / 100;
   if (roundedPrice !== price) {
-    process.stderr.write(
-      `${ANSI.yellow}[executor] Preço SELL ajustado para tick mínimo: ${price} → ${roundedPrice}${ANSI.reset}\n`
-    );
+    logger.info({ component: "executor", action: "SELL", from: price, to: roundedPrice }, "SELL price rounded to tick");
   }
 
   const roundedSize = Math.floor(size * 100) / 100;
 
   if (TRADE_MOCK) {
-    process.stderr.write(
-      `${ANSI.yellow}[MOCK SELL] ${roundedSize} shares do Token ${token.slice(0, 20)}... ` +
-      `a ${formatCents(roundedPrice)} [MOCK]${ANSI.reset}\n`
-    );
+    logger.info({ component: "executor", action: "SELL", mock: true, tokenId: token, shareSize: roundedSize, price: roundedPrice }, "Mock SELL order");
     return { success: true, mock: true, tokenId: token, side: "SELL", shareSize: roundedSize, price: roundedPrice };
   }
 
-  process.stderr.write(
-    `${ANSI.green}[EXECUCAO] Vendendo ${roundedSize} shares do Token ${token.slice(0, 20)}... ` +
-    `a ${formatCents(roundedPrice)}${ANSI.reset}\n`
-  );
+  logger.info({ component: "executor", action: "SELL", tokenId: token, shareSize: roundedSize, price: roundedPrice }, "Placing SELL order");
 
   // Sync on-chain allowance with CLOB ("Activate Funds")
   await ensureBalanceAllowance();
@@ -476,30 +432,23 @@ export async function executeSell(tokenId, shareSize, limitPrice) {
       OrderType.GTC,
     );
   } catch (err) {
-    const detail = err?.message ?? String(err);
-    process.stderr.write(`${ANSI.red}[EXECUCAO] Exceção ao enviar ordem SELL: ${detail}${ANSI.reset}\n`);
+    logger.error({ component: "executor", err: err?.message }, "Exception sending SELL order");
     throw err;
   }
 
   if (response && typeof response === "object" && ("error" in response || "errorCode" in response)) {
     const apiError = response.error ?? response.errorCode ?? JSON.stringify(response);
     const detail = typeof apiError === "object" ? JSON.stringify(apiError) : String(apiError);
-    process.stderr.write(
-      `${ANSI.red}[EXECUCAO] API rejeitou a ordem SELL — resposta completa: ${JSON.stringify(response)}${ANSI.reset}\n`
-    );
+    logger.error({ component: "executor", response }, "API rejected SELL order");
     throw new Error(`[executor] API rejeitou a ordem SELL: ${detail}`);
   }
 
   if (!response || typeof response !== "object") {
-    process.stderr.write(
-      `${ANSI.red}[EXECUCAO] Resposta inesperada da API (SELL): ${JSON.stringify(response)}${ANSI.reset}\n`
-    );
+    logger.error({ component: "executor", response }, "Unexpected API response for SELL order");
     throw new Error(`[executor] Resposta inesperada da API (SELL): ${JSON.stringify(response)}`);
   }
 
-  process.stderr.write(
-    `${ANSI.green}[EXECUCAO] Ordem SELL aceita pela API. Resposta: ${JSON.stringify(response)}${ANSI.reset}\n`
-  );
+  logger.info({ component: "executor", response }, "SELL order accepted");
   return response;
 }
 

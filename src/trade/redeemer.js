@@ -1,4 +1,5 @@
 import { Contract, Interface, JsonRpcProvider, Wallet, ZeroHash } from "ethers";
+import { logger } from "../logging/logger.js";
 
 const PROXY_ADDRESS = String(process.env.POLYMARKET_PROXY_ADDRESS ?? "").trim();
 const RPC_URL = process.env.POLYGON_RPC_URL || "https://polygon-bor-rpc.publicnode.com";
@@ -160,9 +161,7 @@ export async function runAutoRedeem() {
   const winners = listRedeemCandidates(positions);
   if (!winners.length) return { events };
 
-  process.stderr.write(
-    `\x1b[36m[REDEEM] ${winners.length} posição(ões) vencedora(s) candidata(s) a resgate.\x1b[0m\n`
-  );
+  logger.info({ component: "redeemer", candidates: winners.length }, "Redeemable winning positions found");
 
   for (const pos of winners) {
     const conditionId = String(pos?.conditionId ?? "").trim();
@@ -175,9 +174,7 @@ export async function runAutoRedeem() {
     if (!conditionId || !PROXY_ADDRESS) continue;
 
     if (TRADE_MOCK) {
-      process.stderr.write(
-        `\x1b[33m[REDEEM][MOCK] Resgate simulado: ${title} | ~$${value.toFixed(2)} | indexSets [${indexSets}]\x1b[0m\n`
-      );
+      logger.info({ component: "redeemer", mock: true, title, value, indexSets }, "Mock redeem");
       redeemedConditions.add(conditionId);
       settledTokenIds.add(tokenId);
       const evt = eventsByTokenId.get(tokenId);
@@ -190,25 +187,23 @@ export async function runAutoRedeem() {
 
     const wallet = getWallet();
     if (!wallet) {
-      process.stderr.write(`\x1b[31m[REDEEM] PK não configurada — impossível resgatar.\x1b[0m\n`);
+      logger.error({ component: "redeemer" }, "PK not configured — cannot redeem");
       break;
     }
 
     const ctf = new Contract(CTF_ADDRESS, CTF_ABI, wallet.provider);
     const balance = await ctf.balanceOf(PROXY_ADDRESS, BigInt(tokenId)).catch(() => 0n);
     if (balance === 0n) {
-      process.stderr.write(`\x1b[33m[REDEEM] ${title} — saldo on-chain zero, pulando.\x1b[0m\n`);
+      logger.info({ component: "redeemer", title }, "On-chain balance zero, skipping");
       redeemedConditions.add(conditionId);
       settledTokenIds.add(tokenId);
       continue;
     }
 
     try {
-      process.stderr.write(
-        `\x1b[36m[REDEEM] Resgatando: ${title} (~$${value.toFixed(2)}) | indexSets [${indexSets}]\x1b[0m\n`
-      );
+      logger.info({ component: "redeemer", title, value, indexSets }, "Redeeming position");
       const tx = await redeemViaSafe(wallet, conditionId, indexSets);
-      process.stderr.write(`\x1b[32m[REDEEM] Tx enviada: ${tx.hash}\x1b[0m\n`);
+      logger.info({ component: "redeemer", txHash: tx.hash }, "Redeem tx sent");
       const WAIT_TIMEOUT_MS = 2 * 60 * 1000;
       const receipt = await Promise.race([
         tx.wait(1),
@@ -216,9 +211,7 @@ export async function runAutoRedeem() {
           setTimeout(() => reject(new Error(`tx.wait timeout após ${WAIT_TIMEOUT_MS / 1000}s`)), WAIT_TIMEOUT_MS)
         ),
       ]);
-      process.stderr.write(
-        `\x1b[32m[REDEEM] ✔ Confirmada no bloco ${receipt.blockNumber}. USDC creditado na proxy.\x1b[0m\n`
-      );
+      logger.info({ component: "redeemer", blockNumber: receipt.blockNumber }, "Redeem confirmed, USDC credited");
       redeemedConditions.add(conditionId);
       settledTokenIds.add(tokenId);
       const evt = eventsByTokenId.get(tokenId);
@@ -227,7 +220,7 @@ export async function runAutoRedeem() {
         evt.closeReason = "redeemed";
       }
     } catch (err) {
-      process.stderr.write(`\x1b[31m[REDEEM] Erro ao resgatar "${title}": ${err.message}\x1b[0m\n`);
+      logger.error({ component: "redeemer", title, err: err.message }, "Redeem failed");
     }
   }
 

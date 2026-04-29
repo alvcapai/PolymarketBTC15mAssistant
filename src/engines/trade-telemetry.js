@@ -1,17 +1,20 @@
-import fs from "node:fs";
+import { appendFile, mkdirSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { logger } from "../logging/logger.js";
 
 const OPEN_LOG_PATH = path.resolve(process.cwd(), "data", "trades_opened.jsonl");
 const CLOSE_LOG_PATH = path.resolve(process.cwd(), "data", "trades_closed.jsonl");
 
 function ensureDir(filePath) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
 function appendJsonl(filePath, payload) {
   ensureDir(filePath);
-  fs.appendFileSync(filePath, `${JSON.stringify(payload)}\n`, "utf8");
+  appendFile(filePath, `${JSON.stringify(payload)}\n`, "utf8", (err) => {
+    if (err) logger.error({ component: "telemetry", filePath, err: err.message }, "Failed to write JSONL");
+  });
 }
 
 export function createTradeId() {

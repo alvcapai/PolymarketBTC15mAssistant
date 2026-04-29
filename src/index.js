@@ -37,6 +37,7 @@ import { appendCsvRow, formatNumber, formatPct, getCandleWindowTiming, sleep } f
 import { startBinanceTradeStream } from "./data/binanceWs.js";
 import readline from "node:readline";
 import { applyGlobalProxyFromEnv } from "./net/proxy.js";
+import { logger } from "./logging/logger.js";
 import { executeTrade, fetchUsdcBalance, transferUsdc, WITHDRAWAL_ADDRESS } from "./trade/executor.js";
 import { runAutoRedeem } from "./trade/redeemer.js";
 import { checkTakeProfit } from "./trade/take-profit.js";
@@ -336,10 +337,10 @@ function processOutcomeEvents(bankrollState, events) {
       });
     }
 
-    process.stderr.write(
-      `\x1b[35m[OUTCOME] ${event.won ? "WIN" : "LOSS"} token ${event.tokenId} | ` +
-      `stake $${outcome.stakeUsed.toFixed(2)} | losingStreak=${bankrollState.losingStreak}\x1b[0m\n`
-    );
+    logger.info({
+      component: "outcome", result: event.won ? "WIN" : "LOSS",
+      tokenId: event.tokenId, stake: outcome.stakeUsed, losingStreak: bankrollState.losingStreak,
+    }, `Outcome: ${event.won ? "WIN" : "LOSS"}`);
   }
 }
 
@@ -423,9 +424,7 @@ async function main() {
 
       const floorCheck = checkCycleFloor(bankrollState);
       if (floorCheck.cycleEnded && !wasCycleEnded) {
-        process.stderr.write(
-          `\x1b[31m[RISK] Ciclo ${bankrollState.cycleNumber} encerrado: ${floorCheck.reason}. Novas entradas bloqueadas.\x1b[0m\n`
-        );
+        logger.warn({ component: "risk", cycle: bankrollState.cycleNumber, reason: floorCheck.reason }, "Cycle ended — new entries blocked");
       }
       wasCycleEnded = floorCheck.cycleEnded;
 
@@ -433,21 +432,16 @@ async function main() {
       if (withdrawalCheck.shouldWithdraw && !isWithdrawing) {
         isWithdrawing = true;
         const { withdrawAmount, resetTo } = withdrawalCheck;
-        process.stderr.write(
-          `\x1b[32m[SAQUE] bankroll $${bankrollState.bankroll.toFixed(2)} >= $150. ` +
-          `Transferindo $${withdrawAmount} para ${WITHDRAWAL_ADDRESS} (reset operacional -> $${resetTo}).\x1b[0m\n`
-        );
+        logger.info({ component: "withdrawal", bankroll: bankrollState.bankroll, withdrawAmount, to: WITHDRAWAL_ADDRESS, resetTo }, "Withdrawal triggered");
         try {
           const result = await transferUsdc(WITHDRAWAL_ADDRESS, withdrawAmount);
           recordWithdrawal(bankrollState);
           cachedBalance = resetTo;
           lastBalanceCheckMs = Date.now();
           persistNow();
-          process.stderr.write(
-            `\x1b[32m[SAQUE] Concluido. Tx: ${result.txHash ?? "(mock)"} | novo ciclo=${bankrollState.cycleNumber}\x1b[0m\n`
-          );
+          logger.info({ component: "withdrawal", txHash: result.txHash ?? "(mock)", newCycle: bankrollState.cycleNumber }, "Withdrawal completed");
         } catch (err) {
-          process.stderr.write(`\x1b[31m[SAQUE] Falha: ${err?.message ?? String(err)}\x1b[0m\n`);
+          logger.error({ component: "withdrawal", err: err?.message ?? String(err) }, "Withdrawal failed");
         } finally {
           isWithdrawing = false;
         }
@@ -527,10 +521,7 @@ async function main() {
         basisStddev = Math.sqrt(variance);
       }
       const vwapMargin = basisStddev > 25 ? 0.5 * basisStddev : 0;
-      process.stderr.write(
-        `\x1b[90m[BASIS] binance=${binanceClose.toFixed(2)} chainlink=${chainlinkPrice?.toFixed(2) ?? "n/a"} ` +
-        `basis=${basisNow?.toFixed(2) ?? "n/a"} stddev=${basisStddev.toFixed(2)} vwapMargin=${vwapMargin.toFixed(2)}\x1b[0m\n`
-      );
+      logger.info({ component: "basis", binance: binanceClose, chainlink: chainlinkPrice, basis: basisNow, stddev: basisStddev, vwapMargin }, "Basis check");
 
       const scored = scoreDirection({
         price: chainlinkPrice ?? lastPrice, // Chainlink as primary anchor; fallback to Binance
@@ -574,7 +565,14 @@ async function main() {
       });
 
       const signal = toDecisionSignal(decision);
-      process.stderr.write(`\x1b[36m[RISK] ${formatDiagnostics(bankrollState, decision)}\x1b[0m\n`);
+      logger.info({
+        component: "risk", bankroll: bankrollState.bankroll, cycle: bankrollState.cycleNumber,
+        openPositions: bankrollState.openPositions, exposure: bankrollState.totalExposure,
+        losingStreak: bankrollState.losingStreak, side: decision.side,
+        probModel: decision.probModel, probMarket: decision.probMarket,
+        rawEdge: decision.rawEdge, netEdge: decision.edge, stake: decision.stake,
+        canEnter: decision.canEnter, reason: decision.reason,
+      }, "Risk diagnostics");
 
       logCounterfactual({
         logDir: "./logs",
@@ -649,12 +647,10 @@ async function main() {
 
       const canTradeThisMarket = poly.ok && marketSlug && !tradedMarketSlugs.has(marketSlug);
       if (!decision.canEnter) {
-        process.stderr.write(
-          `\x1b[90m[AUTO-TRADE] NO TRADE — ${decision.reason} | signal=${signal}\x1b[0m\n`
-        );
+        logger.info({ component: "auto-trade", action: "NO_TRADE", reason: decision.reason, signal }, "No trade");
         const blockReport = recordBlockReason(decision.reason);
         if (blockReport) {
-          process.stderr.write(`\x1b[33m[TELEMETRY] ${blockReport}\x1b[0m\n`);
+          logger.info({ component: "telemetry" }, blockReport);
         }
       } else if (!canTradeThisMarket) {
         const reason = !poly.ok
@@ -662,7 +658,7 @@ async function main() {
           : !marketSlug
             ? "slug do mercado vazio"
             : `mercado ja operado (${marketSlug})`;
-        process.stderr.write(`\x1b[33m[AUTO-TRADE] Entrada aprovada, mas bloqueada: ${reason}.\x1b[0m\n`);
+        logger.warn({ component: "auto-trade", reason }, "Entry approved but blocked");
       } else {
         const isUp = decision.side === "UP";
         const targetTokenId = isUp ? poly.tokens.upTokenId : poly.tokens.downTokenId;
@@ -673,15 +669,15 @@ async function main() {
           : rawPriceNum;
 
         if (!targetTokenId) {
-          process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — tokenId ausente para ${decision.side}.\x1b[0m\n`);
+          logger.error({ component: "auto-trade", side: decision.side }, "Blocked — missing tokenId");
         } else if (tradedTokens.has(targetTokenId)) {
-          process.stderr.write(`\x1b[33m[AUTO-TRADE] BLOQUEADO — token ${targetTokenId} ja operado nesta sessao.\x1b[0m\n`);
+          logger.warn({ component: "auto-trade", targetTokenId }, "Blocked — token already traded this session");
         } else if (!Number.isFinite(targetPrice) || targetPrice <= 0) {
-          process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — preco invalido (${rawPrice}).\x1b[0m\n`);
+          logger.error({ component: "auto-trade", rawPrice }, "Blocked — invalid price");
         } else if (!Number.isFinite(decision.stake) || decision.stake < MIN_TRADE_SIZE) {
-          process.stderr.write(`\x1b[31m[AUTO-TRADE] BLOQUEADO — stake invalida $${decision.stake}.\x1b[0m\n`);
+          logger.error({ component: "auto-trade", stake: decision.stake }, "Blocked — invalid stake");
         } else if (isPlacingOrder) {
-          process.stderr.write(`\x1b[33m[AUTO-TRADE] Ordem em andamento, aguardando confirmação.\x1b[0m\n`);
+          logger.warn({ component: "auto-trade" }, "Order already in progress");
         } else {
           const probabilityPct = decision.probModel * 100;
           const sideLabel = isUp ? "LONG" : "SHORT";
@@ -691,12 +687,13 @@ async function main() {
           const totalExposureBefore = bankrollState.totalExposure;
           const losingStreakBefore = bankrollState.losingStreak;
 
-          process.stderr.write(
-            `\x1b[32m[AUTO-TRADE] DISPARANDO ${sideLabel}${isMockMode ? " [MOCK]" : " [REAL]"} | ` +
-            `prob_model ${probabilityPct.toFixed(2)}% | prob_market ${(decision.probMarket * 100).toFixed(2)}% | ` +
-            `raw_edge ${(decision.rawEdge * 100).toFixed(2)}% net_edge ${(decision.edge * 100).toFixed(2)}% | stake $${decision.stake.toFixed(2)} | ` +
-            `rawAsk ${rawPriceNum.toFixed(4)} + slippage ${tradeSlippage} = ${targetPrice.toFixed(2)} | token ${targetTokenId}\x1b[0m\n`
-          );
+          logger.info({
+            component: "auto-trade", action: "FIRE", side: sideLabel, mock: isMockMode,
+            probModel: probabilityPct, probMarket: decision.probMarket * 100,
+            rawEdge: decision.rawEdge * 100, netEdge: decision.edge * 100,
+            stake: decision.stake, rawAsk: rawPriceNum, slippage: tradeSlippage,
+            targetPrice, targetTokenId,
+          }, `Firing ${sideLabel} order`);
 
           tradedTokens.add(targetTokenId);
           isPlacingOrder = true;
@@ -751,22 +748,17 @@ async function main() {
               time_left_min: timeLeftMin,
               model_version: MODEL_VERSION
             });
-            process.stderr.write(`\x1b[32m[AUTO-TRADE] Ordem confirmada pela API (${marketSlug}).\x1b[0m\n`);
+            logger.info({ component: "auto-trade", marketSlug }, "Order confirmed by API");
           } catch (err) {
             tradedTokens.delete(targetTokenId);
-            process.stderr.write(
-              `\x1b[31m[AUTO-TRADE] FALHA na ordem ${sideLabel}: ${err?.message ?? String(err)}\x1b[0m\n`
-            );
+            logger.error({ component: "auto-trade", side: sideLabel, err: err?.message ?? String(err) }, "Order failed");
           } finally {
             isPlacingOrder = false;
           }
         }
       }
     } catch (err) {
-      process.stderr.write(
-        `\x1b[31m[LOOP] Erro no ciclo principal:\x1b[0m\n` +
-        `\x1b[31m  ${err?.stack ?? err?.message ?? String(err)}\x1b[0m\n`
-      );
+      logger.error({ component: "loop", err: err?.stack ?? err?.message ?? String(err) }, "Main loop error");
     }
 
     await sleep(CONFIG.pollIntervalMs);

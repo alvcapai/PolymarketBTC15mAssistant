@@ -1,4 +1,5 @@
 import { executeSell } from "./executor.js";
+import { logger } from "../logging/logger.js";
 
 const MIN_TIME_LEFT_MIN = 1;       // hold in final 1 min — let settlement pay $1 (was 2)
 const STOP_LOSS_FACTOR = 0.30;     // sell if position dropped to 30% of entry price (−70%)
@@ -36,11 +37,10 @@ async function fetchMidPrice(tokenId) {
 }
 
 async function doSell(tokenId, shareSize, currentPrice, reason) {
-  process.stderr.write(
-    `\x1b[32m[TAKE-PROFIT] ${reason} token=${tokenId.slice(0, 20)}... ` +
-    `cur=${currentPrice.toFixed(2)} proceeds=$${(currentPrice * shareSize).toFixed(2)}` +
-    `${TRADE_MOCK ? " [MOCK]" : ""}\x1b[0m\n`
-  );
+  logger.info({
+    component: "take-profit", reason, tokenId: tokenId.slice(0, 20),
+    currentPrice, proceeds: currentPrice * shareSize, mock: TRADE_MOCK,
+  }, "Take-profit sell triggered");
   if (!TRADE_MOCK) {
     await executeSell(tokenId, shareSize, currentPrice);
   }
@@ -75,7 +75,7 @@ export async function checkTakeProfit(bankrollState, { settlementLeftMin = null 
       try {
         await doSell(tokenId, shareSize, currentPrice, "STOP-LOSS");
       } catch (err) {
-        process.stderr.write(`\x1b[31m[TAKE-PROFIT] stop-loss sell error ${tokenId.slice(0, 20)}...: ${err.message}\x1b[0m\n`);
+        logger.error({ component: "take-profit", tokenId: tokenId.slice(0, 20), err: err.message }, "Stop-loss sell error");
         continue;
       }
       takenProfitTokens.add(tokenId);
@@ -107,7 +107,7 @@ export async function checkTakeProfit(bankrollState, { settlementLeftMin = null 
     try {
       await doSell(tokenId, shareSize, currentPrice, `TAKE-PROFIT thresh=${threshold.toFixed(2)}`);
     } catch (err) {
-      process.stderr.write(`\x1b[31m[TAKE-PROFIT] sell error ${tokenId.slice(0, 20)}...: ${err.message}\x1b[0m\n`);
+      logger.error({ component: "take-profit", tokenId: tokenId.slice(0, 20), err: err.message }, "Take-profit sell error");
       continue;
     }
 
