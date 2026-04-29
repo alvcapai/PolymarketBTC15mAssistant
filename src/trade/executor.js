@@ -1,23 +1,10 @@
 import "dotenv/config";
 import crypto from "node:crypto";
 import { Contract, Interface, JsonRpcProvider, Wallet } from "ethers";
-import { Chain, ClobClient, OrderType, Side } from "@polymarket/clob-client";
+import { ClobClient, OrderType, Side } from "@polymarket/clob-client-v2";
+import { createWalletClient, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { CONFIG } from "../config.js";
-
-// ─── Shim de compatibilidade ethers v5 → v6 ──────────────────────────────────
-// O SDK @polymarket/clob-client v5.x aceita signers com interface ethers v5
-// (_signTypedData) ou viem (signTypedData). No ethers v6 o método é signTypedData
-// (sem underscore). O shim abaixo garante que o SDK encontra _signTypedData.
-function ensureLegacyTypedDataSigner(signer) {
-  if (typeof signer?._signTypedData === "function") return signer;
-  if (typeof signer?.signTypedData !== "function") return signer;
-
-  signer._signTypedData = (...args) => signer.signTypedData(...args);
-  process.stderr.write(
-    "\x1b[33m[executor] Shim signer._signTypedData injetado na instância (ethers v5→v6).\x1b[0m\n"
-  );
-  return signer;
-}
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -30,19 +17,23 @@ const ANSI = {
 };
 
 const CLOB_HOST      = process.env.POLYMARKET_CLOB_HOST || "https://clob.polymarket.com";
-const CHAIN_ID       = Chain.POLYGON;
+const CHAIN_ID       = 137; // Polygon mainnet (number for v2 SDK)
 const TRADE_MOCK     = String(process.env.TRADE_MOCK_MODE ?? "true").toLowerCase() === "true";
 const PROXY_ADDRESS  = String(process.env.POLYMARKET_PROXY_ADDRESS ?? "").trim();
 // Polymarket SignatureType: 0=EOA, 1=POLY_PROXY, 2=POLY_GNOSIS_SAFE
 const SIGNATURE_TYPE = Number(process.env.POLYMARKET_SIGNATURE_TYPE ?? (PROXY_ADDRESS ? 2 : 0));
 
+// Default tickSize and negRisk for BTC/ETH up-or-down markets
+const TICK_SIZE = "0.01";
+const NEG_RISK  = false;
+
 // Destination wallet for automatic profit withdrawals
 const WITHDRAWAL_ADDRESS = String(
-  process.env.WITHDRAWAL_ADDRESS ?? "0xCbaDe218c50692C9401159A406c6Fd9A65dDF417"
+  process.env.WITHDRAWAL_ADDRESS ?? "0xCbaDe218c50692C94001159A406c6Fd9A65dDF417"
 ).trim();
 
-// Native USDC on Polygon mainnet (migrado de Bridged USDC.e — ver docs/BOT-LOGIC.md)
-const USDC_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359";
+// USDC on Polygon mainnet
+const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 
 // ─── ABIs ────────────────────────────────────────────────────────────────────
 
@@ -115,23 +106,11 @@ function formatCents(price) {
   return `${(Number(price) * 100).toFixed(1).replace(/\.0$/, "")}c`;
 }
 
-// ─── HMAC helper (para consulta de saldo via API raw) ─────────────────────────
-function buildHmacSignature(secret, timestamp, method, path) {
-  const message   = `${timestamp}${method}${path}`;
-  const secretStd = secret.replace(/-/g, "+").replace(/_/g, "/");
-  return crypto
-    .createHmac("sha256", Buffer.from(secretStd, "base64"))
-    .update(message)
-    .digest("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
 // ─── Initialization ───────────────────────────────────────────────────────────
-// Credenciais e wallet são validadas AGORA (fail-fast), não na primeira ordem.
 
 let clobClient    = null;
-let signerWallet  = null;   // armazenado para transferUsdc
+let signerWallet  = null;   // ethers wallet (for on-chain txs: USDC transfer, Safe)
+let viemAccount   = null;   // viem account (for CLOB V2 signing)
 let walletAddress = null;
 let apiSecret     = null;
 let apiKey        = null;
@@ -157,35 +136,56 @@ if (!TRADE_MOCK) {
     );
   }
 
-  const provider = new JsonRpcProvider(CONFIG.chainlink.polygonRpcUrl);
-  const wallet   = new Wallet(normalizePrivateKey(pk), provider);
-  const clobSigner = ensureLegacyTypedDataSigner(wallet);
+  const pkNormalized = normalizePrivateKey(pk);
+  const creds        = loadApiCreds();
 
-  const creds    = loadApiCreds();
+  // Ethers wallet for on-chain operations (USDC transfer, Gnosis Safe)
+  const provider = new JsonRpcProvider(CONFIG.chainlink.polygonRpcUrl);
+  const wallet   = new Wallet(pkNormalized, provider);
+
+  // Viem account for CLOB V2 EIP-712 signing
+  const account = privateKeyToAccount(pkNormalized);
+  const viemSigner = createWalletClient({
+    account,
+    chain: { id: CHAIN_ID, rpcUrls: { default: { http: [CONFIG.chainlink.polygonRpcUrl] } } },
+    transport: http(),
+  });
 
   signerWallet   = wallet;
+  viemAccount    = account;
   walletAddress  = wallet.address;
   apiSecret      = creds.secret;
   apiKey         = creds.key;
   apiPassphrase  = creds.passphrase;
 
-  // ── ClobClient com signature type e funder address ──────────────────────
-  // PRESERVAR: SignatureType 2 = POLY_GNOSIS_SAFE — sem isso, ordens de proxy falham.
-  clobClient = new ClobClient(
-    CLOB_HOST,
-    CHAIN_ID,
-    clobSigner,
-    creds,
-    SIGNATURE_TYPE,
-    PROXY_ADDRESS || undefined,
-  );
+  // ── ClobClient V2 with options-object constructor ───────────────────────
+  clobClient = new ClobClient({
+    host:          CLOB_HOST,
+    chain:         CHAIN_ID,
+    signer:        viemSigner,
+    creds:         creds,
+    signatureType: SIGNATURE_TYPE,
+    funderAddress: PROXY_ADDRESS || undefined,
+  });
 
   console.log(
-    `${ANSI.green}[executor] ClobClient inicializado (modo real, sig type ${SIGNATURE_TYPE}` +
+    `${ANSI.green}[executor] ClobClient V2 inicializado (modo real, sig type ${SIGNATURE_TYPE}` +
     `${PROXY_ADDRESS ? `, funder ${PROXY_ADDRESS}` : ""}).${ANSI.reset}`
   );
 } else {
   console.log(`${ANSI.yellow}[executor] TRADE_MOCK_MODE ativo — nenhuma ordem real será enviada.${ANSI.reset}`);
+}
+
+// ─── HMAC helper (para consulta de saldo via API raw) ─────────────────────────
+function buildHmacSignature(secret, timestamp, method, path) {
+  const message   = `${timestamp}${method}${path}`;
+  const secretStd = secret.replace(/-/g, "+").replace(/_/g, "/");
+  return crypto
+    .createHmac("sha256", Buffer.from(secretStd, "base64"))
+    .update(message)
+    .digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
 }
 
 // ─── fetchUsdcBalance ─────────────────────────────────────────────────────────
@@ -303,7 +303,7 @@ export async function transferUsdc(toAddress, amountUsdc) {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Executa (ou simula) uma ordem de compra no Polymarket CLOB.
+ * Executa (ou simula) uma ordem de compra no Polymarket CLOB V2.
  *
  * @param {string} marketTokenId  Token ID do outcome alvo
  * @param {string} side           Lado da ordem (apenas "BUY" suportado)
@@ -328,7 +328,6 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
   if (price <= 0 || price >= 1) throw new Error("[executor] limitPrice deve estar entre 0 e 1 (exclusive).");
 
   // Arredondar para o tick mínimo do Polymarket (0.01 = 1 centavo)
-  // Preços com mais casas decimais causam rejeição silenciosa por "invalid tick size"
   const roundedPrice = Math.round(price * 100) / 100;
   if (roundedPrice !== price) {
     process.stderr.write(
@@ -336,8 +335,6 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
     );
   }
   // Arredondar shares para CIMA com 2 casas decimais.
-  // Divisão simples pode gerar notional ligeiramente abaixo do mínimo ($1):
-  //   ex: 1.00 / 0.53 = 1.8867... → API computa $0.9964 → rejeita "min size: $1"
   const shareSize = Math.ceil((usdcSize / roundedPrice) * 100) / 100;
 
   // ── Mock Mode ────────────────────────────────────────────────────────────
@@ -350,31 +347,29 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
     return { success: true, mock: true, tokenId, side: Side.BUY, usdcSize, shareSize, price, probability: probabilityN };
   }
 
-  // ── Modo Real ────────────────────────────────────────────────────────────
+  // ── Modo Real (CLOB V2) ─────────────────────────────────────────────────
   process.stderr.write(
     `${ANSI.green}[EXECUCAO] Apostando $${usdcSize.toFixed(2)} em ${Side.BUY}` +
     ` no Token ${tokenId} a ${formatCents(price)}` +
     ` (Probabilidade: ${probabilityN.toFixed(2)}%)${ANSI.reset}\n`
   );
 
-  const order = await clobClient.createOrder({
-    tokenID:    tokenId,
-    side:       Side.BUY,
-    price:      roundedPrice,
-    size:       shareSize,
-    feeRateBps: 1000,
-  });
-
-  // ATENÇÃO: clobClient.postOrder() NUNCA lança exceção — em falha de API retorna
-  // { error: "..." } silenciosamente (ver http-helpers/index.js do SDK).
-  // É obrigatório checar o retorno explicitamente.
+  // CLOB V2: createAndPostOrder creates, signs, and posts in one call
   let response;
   try {
-    response = await clobClient.postOrder(order, OrderType.GTC);
+    response = await clobClient.createAndPostOrder(
+      {
+        tokenID: tokenId,
+        side:    Side.BUY,
+        price:   roundedPrice,
+        size:    shareSize,
+      },
+      { tickSize: TICK_SIZE, negRisk: NEG_RISK },
+      OrderType.GTC,
+    );
   } catch (err) {
-    // Raro: só ocorre se createOrder ou a serialização da ordem falhar localmente
     const detail = err?.message ?? String(err);
-    process.stderr.write(`${ANSI.red}[EXECUCAO] Exceção local ao enviar ordem: ${detail}${ANSI.reset}\n`);
+    process.stderr.write(`${ANSI.red}[EXECUCAO] Exceção ao enviar ordem: ${detail}${ANSI.reset}\n`);
     throw err;
   }
 
@@ -403,7 +398,7 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
 }
 
 /**
- * Executa (ou simula) uma ordem de VENDA no Polymarket CLOB.
+ * Executa (ou simula) uma ordem de VENDA no Polymarket CLOB V2.
  * Usada pelo take-profit para liquidar posições antes do settlement.
  *
  * @param {string} tokenId    Token ID do outcome a vender
@@ -442,20 +437,21 @@ export async function executeSell(tokenId, shareSize, limitPrice) {
     `a ${formatCents(roundedPrice)}${ANSI.reset}\n`
   );
 
-  const order = await clobClient.createOrder({
-    tokenID:    token,
-    side:       Side.SELL,
-    price:      roundedPrice,
-    size:       roundedSize,
-    feeRateBps: 1000,
-  });
-
   let response;
   try {
-    response = await clobClient.postOrder(order, OrderType.GTC);
+    response = await clobClient.createAndPostOrder(
+      {
+        tokenID: token,
+        side:    Side.SELL,
+        price:   roundedPrice,
+        size:    roundedSize,
+      },
+      { tickSize: TICK_SIZE, negRisk: NEG_RISK },
+      OrderType.GTC,
+    );
   } catch (err) {
     const detail = err?.message ?? String(err);
-    process.stderr.write(`${ANSI.red}[EXECUCAO] Exceção local ao enviar ordem SELL: ${detail}${ANSI.reset}\n`);
+    process.stderr.write(`${ANSI.red}[EXECUCAO] Exceção ao enviar ordem SELL: ${detail}${ANSI.reset}\n`);
     throw err;
   }
 

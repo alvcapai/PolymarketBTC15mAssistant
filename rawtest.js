@@ -121,7 +121,7 @@ async function runRawTest() {
         `${G}  • API keys na conta : ${count}${X}\n\n` +
         `${Y}  DIAGNÓSTICO: As chaves são VÁLIDAS mas o SDK v2.8.0 tem um bug de${X}\n` +
         `${Y}  base64 URL-safe (CryptoJS). Solução: atualizar o SDK.${X}\n` +
-        `${Y}  Execute: npm install @polymarket/clob-client@latest${X}\n`
+        `${Y}  Execute: npm install @polymarket/clob-client-v2@latest${X}\n`
       );
     } else if (res.status === 401) {
       console.error(

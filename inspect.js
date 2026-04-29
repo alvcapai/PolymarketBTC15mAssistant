@@ -1,27 +1,41 @@
 import 'dotenv/config';
-import { JsonRpcProvider, Wallet } from 'ethers';
-import { Chain, ClobClient } from '@polymarket/clob-client';
+import { ClobClient } from '@polymarket/clob-client-v2';
+import { createWalletClient, http, privateKeyToAccount } from 'viem';
 import { CONFIG } from './src/config.js';
 
-const pk = '0x' + process.env.PK.replace('0x', '');
-const provider = new JsonRpcProvider(CONFIG.chainlink.polygonRpcUrl);
-const wallet = new Wallet(pk, provider);
+const pk = process.env.PK.startsWith('0x') ? process.env.PK : '0x' + process.env.PK;
+const account = privateKeyToAccount(pk);
+const viemSigner = createWalletClient({
+  account,
+  chain: { id: 137, rpcUrls: { default: { http: [CONFIG.chainlink.polygonRpcUrl] } } },
+  transport: http(),
+});
 
-const client = new ClobClient('https://clob.polymarket.com', Chain.POLYGON, wallet, {
+const client = new ClobClient({
+  host: 'https://clob.polymarket.com',
+  chain: 137,
+  signer: viemSigner,
+  creds: {
     key: process.env.POLYMARKET_API_KEY,
     secret: process.env.POLYMARKET_API_SECRET,
-    passphrase: process.env.POLYMARKET_API_PASSPHRASE
-}, 2, process.env.POLYMARKET_PROXY_ADDRESS);
+    passphrase: process.env.POLYMARKET_API_PASSPHRASE,
+  },
+  signatureType: 2,
+  funderAddress: process.env.POLYMARKET_PROXY_ADDRESS,
+});
 
-console.log('Signer constructor:', client.signer.constructor.name);
-console.log('Signer keys:', Object.keys(client.signer));
-console.log('Signer proto keys:', Object.keys(Object.getPrototypeOf(client.signer)));
-console.log('Signer has _signTypedData:', typeof client.signer._signTypedData);
-console.log('Signer has signTypedData:', typeof client.signer.signTypedData);
+console.log('Signer type:', client.signer.constructor?.name ?? typeof client.signer);
+console.log('Signer account address:', client.signer.account?.address ?? 'N/A');
 
 try {
-    console.log('Testing call...');
-    await client.signer._signTypedData({chainId: 137}, {}, {});
+  console.log('Testing signTypedData...');
+  await client.signer.signTypedData({
+    domain: { chainId: 137, name: 'test', version: '1' },
+    types: { Test: [{ name: 'value', type: 'uint256' }] },
+    primaryType: 'Test',
+    message: { value: 1n },
+  });
+  console.log('signTypedData OK');
 } catch (e) {
-    console.log('Error calling _signTypedData:', e.message);
+  console.log('Error calling signTypedData:', e.message);
 }

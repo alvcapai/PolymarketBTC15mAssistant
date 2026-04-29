@@ -1,22 +1,24 @@
 import 'dotenv/config';
-import { JsonRpcProvider, Wallet } from 'ethers';
-import { Chain, ClobClient } from '@polymarket/clob-client';
+import { ClobClient } from '@polymarket/clob-client-v2';
+import { createWalletClient, http, privateKeyToAccount } from 'viem';
 import { CONFIG } from './src/config.js';
 
-const pk = process.env.PK;
-const provider = new JsonRpcProvider(CONFIG.chainlink.polygonRpcUrl);
-const wallet = new Wallet(pk, provider);
+const pk = process.env.PK.startsWith('0x') ? process.env.PK : '0x' + process.env.PK;
+const account = privateKeyToAccount(pk);
+const viemSigner = createWalletClient({
+  account,
+  chain: { id: 137, rpcUrls: { default: { http: [CONFIG.chainlink.polygonRpcUrl] } } },
+  transport: http(),
+});
 
-console.log('Wallet v6 has signTypedData:', typeof wallet.signTypedData);
-console.log('Wallet v6 has _signTypedData:', typeof wallet._signTypedData);
+console.log('Viem account address:', account.address);
+console.log('Viem account has signTypedData:', typeof account.signTypedData);
 
-const client = new ClobClient('https://clob.polymarket.com', Chain.POLYGON, wallet);
+const client = new ClobClient({
+  host: 'https://clob.polymarket.com',
+  chain: 137,
+  signer: viemSigner,
+});
 
-console.log('Client signer has signTypedData:', typeof client.signer.signTypedData);
-console.log('Client signer has _signTypedData:', typeof client.signer._signTypedData);
-
-if (client.signer._signTypedData === undefined) {
-    console.log('Applying shim...');
-    client.signer._signTypedData = (...args) => client.signer.signTypedData(...args);
-}
-console.log('After shim, Client signer has _signTypedData:', typeof client.signer._signTypedData);
+console.log('Client signer type:', typeof client.signer);
+console.log('Client signer has signTypedData:', typeof client.signer?.signTypedData);
