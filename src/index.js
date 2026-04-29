@@ -305,6 +305,11 @@ function processOutcomeEvents(bankrollState, events) {
     const outcome = recordOutcomeByToken(bankrollState, event.tokenId, event.won);
     if (!outcome.updated) continue;
 
+    // Unlock token and market slug so the bot can trade new markets freely
+    tradedTokens.delete(event.tokenId);
+    const closedSlug = outcome.position?.marketSlug;
+    if (closedSlug) tradedMarketSlugs.delete(closedSlug);
+
     const position = outcome.position ?? {};
     const tradeId = String(position.tradeId ?? "").trim();
     if (tradeId) {
@@ -615,7 +620,7 @@ async function main() {
         "",
         kv("Bankroll:", `$${bankrollState.bankroll.toFixed(2)} | cycle ${bankrollState.cycleNumber}`),
         kv("Exposure:", `$${bankrollState.totalExposure.toFixed(2)} | open ${bankrollState.openPositions}`),
-        kv("Losing streak:", `${bankrollState.losingStreak}${bankrollState.paused ? " (PAUSED)" : ""}`),
+        kv("Losing streak:", `${bankrollState.losingStreak}`),
         "",
         sepLine(),
         kv("ET / Session:", `${fmtEtTime(new Date())} / ${getBtcSession(new Date())}`),

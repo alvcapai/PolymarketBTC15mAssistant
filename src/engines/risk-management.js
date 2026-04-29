@@ -11,7 +11,6 @@ export const WITHDRAWAL_TRIGGER = 150;
 export const WITHDRAWAL_AMOUNT = 100;
 export const BANKROLL_RESET_TO = 50;
 export const MIN_TRADE_SIZE = 1.0;
-export const SESSION_CEILING = 50.0;
 
 const MIN_SHARES = 5;            // Polymarket minimum share size
 const BANKROLL_RISK_CAP = 0.15;    // max 15% of bankroll per trade
@@ -174,16 +173,6 @@ export function decideEntry(state, {
 
   if (state.cycleEnded) {
     return { canEnter: false, reason: "cycle_ended", side, probModel, probMarket, edge: netEdge, rawEdge, edgeUp, edgeDown, stake: 0 };
-  }
-  if (state.bankroll >= SESSION_CEILING) {
-    return {
-      canEnter: false,
-      reason: `bankroll_${state.bankroll.toFixed(2)}_at_or_above_ceiling_${SESSION_CEILING}`,
-      side, probModel, probMarket, edge: netEdge, rawEdge, edgeUp, edgeDown, stake: 0
-    };
-  }
-  if (state.paused) {
-    return { canEnter: false, reason: "paused_losing_streak_5", side, probModel, probMarket, edge: netEdge, rawEdge, edgeUp, edgeDown, stake: 0 };
   }
   if (state.openPositions >= MAX_POSITIONS) {
     return {
@@ -367,9 +356,6 @@ export function recordOutcomeByToken(state, tokenId, won) {
     state.losingStreak = 0;
   } else {
     state.losingStreak += 1;
-    if (state.losingStreak >= 5) {
-      state.paused = true;
-    }
   }
 
   return {
@@ -389,7 +375,6 @@ export function formatDiagnostics(state, decision) {
     `open_pos=${state.openPositions}`,
     `exposure=$${(state.totalExposure ?? 0).toFixed(2)}`,
     `losing_streak=${state.losingStreak}`,
-    `paused=${state.paused}`,
     `cycle_ended=${state.cycleEnded}`,
     `side=${decision.side ?? "null"}`,
     `prob_model=${decision.probModel !== null && Number.isFinite(decision.probModel) ? decision.probModel.toFixed(4) : "null"}`,
