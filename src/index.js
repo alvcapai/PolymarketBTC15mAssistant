@@ -700,23 +700,30 @@ async function main() {
           tradedTokens.add(targetTokenId);
           isPlacingOrder = true;
           try {
+            // Ensure shareSize >= MIN_SHARES (5) at the actual fill price.
+            // risk-management computes minViableStake using probMarket, but
+            // targetPrice = rawAsk + slippage is always higher, so the computed
+            // shares can fall below 5 — causing the CLOB to silently reject the fill.
+            const minStake = Math.ceil(5 * targetPrice * 100) / 100;
+            const effectiveStake = Math.max(decision.stake, minStake);
+
             await executeTrade(
               targetTokenId,
               "BUY",
-              decision.stake,
+              effectiveStake,
               targetPrice,
               probabilityPct
             );
 
             const tradeId = createTradeId();
-            const shareSize = Math.ceil((decision.stake / targetPrice) * 100) / 100;
+            const shareSize = Math.ceil((effectiveStake / targetPrice) * 100) / 100;
             tradedMarketSlugs.add(marketSlug);
             lastBalanceCheckMs = 0;
             recordOpenPosition(bankrollState, {
               tokenId: targetTokenId,
               marketSlug,
               side: decision.side,
-              stakeUsed: decision.stake,
+              stakeUsed: effectiveStake,
               tradeId,
               entryPrice: targetPrice,
               shareSize,

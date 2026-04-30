@@ -16,8 +16,8 @@ const GAMMA_API = "https://gamma-api.polymarket.com";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 // Positions in bankrollState older than this threshold are reconciled against the
-// API on each redeem cycle. Covers the 15-min window plus a buffer for settlement lag.
-const STALE_POSITION_MS = 25 * 60 * 1000;
+// API on each redeem cycle. 15-min window + 2-min settlement buffer.
+const STALE_POSITION_MS = 17 * 60 * 1000;
 
 const CTF_ABI = [
   "function redeemPositions(address collateralToken, bytes32 parentCollectionId, bytes32 conditionId, uint256[] indexSets) external",
