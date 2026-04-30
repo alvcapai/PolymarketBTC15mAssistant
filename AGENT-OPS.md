@@ -246,19 +246,29 @@ grep \$(date +%Y-%m-%d) /home/claudio/workspace/PolymarketBTC15mAssistant/logs/e
 ### 10.1 — Criar o `.env`
 
 ```env
-# OBRIGATORIO — chave privada da carteira Polygon (com ou sem 0x)
-PK=sua_chave_privada_aqui
+# OBRIGATORIO — chave privada da carteira MetaMask (com ou sem 0x)
+# Esta e a PK do EOA (signer/owner), NAO da proxy wallet.
+PK=sua_chave_privada_metamask_aqui
+
+# OBRIGATORIO — endereco da proxy wallet (Gnosis Safe) criada pela Polymarket.
+# Este e o endereco que aparece na UI da Polymarket (Settings ou Deposit),
+# e e diferente do endereco da sua MetaMask.
+# Como encontrar: acesse polymarket.com → Settings → copie o endereco da carteira.
+# Ou no servidor: grep POLYMARKET_PROXY_ADDRESS .env
+POLYMARKET_PROXY_ADDRESS=0xSeuProxyAddress
+
+# OBRIGATORIO quando proxy esta configurado — tipo de assinatura (2 = Gnosis Safe)
+POLYMARKET_SIGNATURE_TYPE=2
 
 # Opcional — RPC customizado (padrao: https://polygon-bor-rpc.publicnode.com)
 POLYGON_RPC_URL=https://polygon-bor-rpc.publicnode.com
 
 # Opcional — endpoint CLOB (padrao: https://clob.polymarket.com)
 POLYMARKET_CLOB_HOST=https://clob.polymarket.com
-
-# Opcional — apenas se a conta usa Smart Wallet / Proxy
-# POLYMARKET_PROXY_ADDRESS=0xSeuProxyAddress
-# POLYMARKET_SIGNATURE_TYPE=2
 ```
+
+> **IMPORTANTE — PK vs Proxy Address:**
+> A Polymarket cria uma **Gnosis Safe (proxy wallet)** para cada conta. Os fundos ficam nessa proxy, nao na MetaMask diretamente. A `PK` e a chave privada da MetaMask (o EOA que e owner da Safe), e o `POLYMARKET_PROXY_ADDRESS` e o endereco da Safe. Sao enderecos diferentes. Sem o proxy address configurado, o saldo aparece como `$0.00` mesmo com fundos depositados.
 
 ### 10.2 — Gerar as API Keys
 
@@ -342,5 +352,7 @@ O smoketest executa **4 verificacoes**:
 | `.env nao encontrado` | Arquivo nao existe | Criar `.env` na raiz do projeto |
 | `Nenhum nonce produziu credenciais validas` | Carteira sem atividade na Polymarket | Fazer login em polymarket.com com essa carteira primeiro |
 | `Credenciais criadas mas rejeitadas` | Keys falharam na validacao | Rodar novamente; se persistir, contatar suporte Polymarket |
+| Saldo `$0.00` com fundos depositados | `POLYMARKET_PROXY_ADDRESS` ausente ou incorreto | A PK da MetaMask (EOA) e o signer, mas os fundos ficam na proxy wallet (Gnosis Safe). Configurar `POLYMARKET_PROXY_ADDRESS` e `POLYMARKET_SIGNATURE_TYPE=2` no `.env` |
+| Wallet address nao confere com MetaMask | PK incorreta ou conta errada | Verificar se exportou a PK da conta correta no MetaMask (Account details → Show private key) |
 
 > **User API Keys vs Builder API Keys:** As chaves geradas pelo `keygen.js` sao User API Keys (CLOB L2) — diferentes das "Builder API Keys" do painel da Polymarket. Sao as credenciais necessarias para negociar via CLOB API programaticamente.
