@@ -52,7 +52,7 @@ import { formatReport } from "./lib/report-writer.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT      = path.resolve(__dirname, "..");
 
-const BOTS      = ["btc-15m", "eth-15m"]; // 5m bots excluded — not running
+const BOTS      = ["btc-15m", "eth-15m"];
 const LOGS_DIR  = path.join(ROOT, "logs");
 const DATA_DIR  = path.join(ROOT, "data");
 const REPORTS_DIR = path.join(ROOT, "reports", "health");

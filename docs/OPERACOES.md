@@ -15,7 +15,6 @@ Saída esperada quando há múltiplos agentes rodando:
 
 ```
 alv  12345  ... TIMEFRAME=btc-15m node src/index.js
-alv  12346  ... TIMEFRAME=btc-5m  node src/index.js
 alv  12347  ... TIMEFRAME=eth-15m node src/index.js
 ```
 
@@ -36,20 +35,14 @@ Se cada agente foi iniciado em um terminal separado com redirecionamento de stde
 # Terminal 1 — iniciar BTC 15m
 npm run start:btc15m 2>logs/btc15m.log
 
-# Terminal 2 — iniciar BTC 5m
-npm run start:btc5m 2>logs/btc5m.log
-
-# Terminal 3 — iniciar ETH 15m
+# Terminal 2 — iniciar ETH 15m
 npm run start:eth15m 2>logs/eth15m.log
-
-# Terminal 4 — iniciar ETH 5m
-npm run start:eth5m 2>logs/eth5m.log
 ```
 
 Acompanhar todos os logs ao mesmo tempo num único terminal:
 
 ```bash
-tail -f logs/btc15m.log logs/btc5m.log logs/eth15m.log logs/eth5m.log
+tail -f logs/btc15m.log logs/eth15m.log
 ```
 
 O `tail -f` com múltiplos arquivos prefixa cada linha com o nome do arquivo:
@@ -98,32 +91,12 @@ module.exports = {
       time: true,
     },
     {
-      name: "btc-5m",
-      script: "src/index.js",
-      interpreter: "node",
-      env: { TIMEFRAME: "btc-5m", NODE_ENV: "production" },
-      error_file: "logs/btc5m-err.log",
-      out_file:   "logs/btc5m-out.log",
-      merge_logs: true,
-      time: true,
-    },
-    {
       name: "eth-15m",
       script: "src/index.js",
       interpreter: "node",
       env: { TIMEFRAME: "eth-15m", NODE_ENV: "production" },
       error_file: "logs/eth15m-err.log",
       out_file:   "logs/eth15m-out.log",
-      merge_logs: true,
-      time: true,
-    },
-    {
-      name: "eth-5m",
-      script: "src/index.js",
-      interpreter: "node",
-      env: { TIMEFRAME: "eth-5m", NODE_ENV: "production" },
-      error_file: "logs/eth5m-err.log",
-      out_file:   "logs/eth5m-out.log",
       merge_logs: true,
       time: true,
     },
@@ -149,7 +122,7 @@ pm2 list
 pm2 status
 
 # Parar um agente
-pm2 stop btc-5m
+pm2 stop btc-15m
 
 # Reiniciar um agente
 pm2 restart eth-15m

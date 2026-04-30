@@ -116,8 +116,6 @@ export async function readSignals(logDir, bot, sinceMs, untilMs = Date.now()) {
 const SLUG_PREFIX = {
   "btc-15m": "btc-",
   "eth-15m": "eth-",
-  "btc-5m":  "btc-",
-  "eth-5m":  "eth-",
 };
 
 /**
@@ -128,7 +126,7 @@ export async function readCounterfactuals(logDir, bot, sinceMs, untilMs = Date.n
   const filePath = path.join(logDir, "counterfactual.csv");
   const rows = await parseCsv(filePath);
   const slugPrefix = SLUG_PREFIX[bot] ?? "";
-  const windowFilter = bot.includes("15m") ? "updown-15m" : "updown-5m";
+  const windowFilter = "updown-15m";
 
   return rows
     .map((r) => ({
@@ -160,8 +158,6 @@ export async function readCounterfactuals(logDir, bot, sinceMs, untilMs = Date.n
 const MARKET_TYPE_MAP = {
   BTC15M: "btc-15m",
   ETH15M: "eth-15m",
-  BTC5M:  "btc-5m",
-  ETH5M:  "eth-5m",
 };
 
 async function readJsonl(filePath) {

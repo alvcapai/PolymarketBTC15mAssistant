@@ -6,9 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "start:btc15m": "TIMEFRAME=btc-15m node src/index.js",
-    "start:btc5m": "TIMEFRAME=btc-5m  node src/index.js",
     "start:eth15m": "TIMEFRAME=eth-15m node src/index.js",
-    "start:eth5m": "TIMEFRAME=eth-5m  node src/index.js",
     "analyze:trades": "node scripts/analyze-trades.js",
     "test": "node --test jobs/health-check.test.js"
   },

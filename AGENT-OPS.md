@@ -260,7 +260,7 @@ Preencha as variaveis obrigatorias no `.env` (veja `.env.example` para a lista c
 | `POLYMARKET_API_SECRET` | Auto | Gerada por `node keygen.js` |
 | `POLYMARKET_API_PASSPHRASE` | Auto | Gerada por `node keygen.js` |
 | `TRADE_MOCK_MODE` | Nao | `true` (padrao/seguro) ou `false` (dinheiro real) |
-| `TIMEFRAME` | Nao | `btc-15m`, `btc-5m`, `eth-15m`, `eth-5m` |
+| `TIMEFRAME` | Nao | `btc-15m`, `eth-15m` |
 
 > **IMPORTANTE — PK vs Proxy Address:**
 > A Polymarket cria uma **Gnosis Safe (proxy wallet)** para cada conta. Os fundos ficam nessa proxy, nao na MetaMask diretamente. A `PK` e a chave privada da MetaMask (o EOA que e owner da Safe), e o `POLYMARKET_PROXY_ADDRESS` e o endereco da Safe. Sao enderecos diferentes. Sem o proxy address configurado, o saldo aparece como `$0.00` mesmo com fundos depositados.
