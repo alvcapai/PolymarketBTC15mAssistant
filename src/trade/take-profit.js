@@ -76,6 +76,14 @@ export async function checkTakeProfit(bankrollState, { settlementLeftMin = null 
         await doSell(tokenId, shareSize, currentPrice, "STOP-LOSS");
       } catch (err) {
         logger.error({ component: "take-profit", tokenId: tokenId.slice(0, 20), err: err.message }, "Stop-loss sell error");
+        if (err.message && err.message.toLowerCase().includes("balance")) {
+          logger.warn({ component: "take-profit", tokenId: tokenId.slice(0, 20) }, "Dropping stale token with zero balance");
+          if (pos) {
+            bankrollState.openPositions = Math.max(0, bankrollState.openPositions - 1);
+            bankrollState.totalExposure = Math.max(0, bankrollState.totalExposure - (pos.stakeUsed ?? 0));
+            bankrollState.positions.delete(tokenId);
+          }
+        }
         continue;
       }
       takenProfitTokens.add(tokenId);
@@ -108,6 +116,14 @@ export async function checkTakeProfit(bankrollState, { settlementLeftMin = null 
       await doSell(tokenId, shareSize, currentPrice, `TAKE-PROFIT thresh=${threshold.toFixed(2)}`);
     } catch (err) {
       logger.error({ component: "take-profit", tokenId: tokenId.slice(0, 20), err: err.message }, "Take-profit sell error");
+      if (err.message && err.message.toLowerCase().includes("balance")) {
+        logger.warn({ component: "take-profit", tokenId: tokenId.slice(0, 20) }, "Dropping stale token with zero balance");
+        if (pos) {
+          bankrollState.openPositions = Math.max(0, bankrollState.openPositions - 1);
+          bankrollState.totalExposure = Math.max(0, bankrollState.totalExposure - (pos.stakeUsed ?? 0));
+          bankrollState.positions.delete(tokenId);
+        }
+      }
       continue;
     }
 
