@@ -3,11 +3,11 @@
 ## Runtime environment
 
 - **Process manager:** `pm2`, process name `btc-15m` (id 0)
-- **Working directory at runtime:** `/root` (NOT the project dir)
-  - Bankroll state: `/root/logs/bankroll-btc-15m.json`
-  - CSV logs: `/root/logs/counterfactual.csv`, `/root/logs/signals-btc-15m.csv`
-  - Pino log files in `/root/logs/` exist but stay 0 bytes (pino-roll worker thread issue)
-  - Live output: `~/.pm2/logs/btc-15m-out.log` (TUI, not structured JSON)
+- **Working directory at runtime:** `/root/workspace/PolymarketBTC15mAssistant`
+  - Bankroll state: `/root/workspace/PolymarketBTC15mAssistant/logs/bankroll-btc-15m.json`
+  - CSV logs: `/root/workspace/PolymarketBTC15mAssistant/logs/counterfactual.csv`, `/root/workspace/PolymarketBTC15mAssistant/logs/signals-btc-15m.csv`
+  - Pino log files in `logs/` exist but stay 0 bytes (pino-roll worker thread issue)
+  - Live output: `/root/.pm2/logs/btc-15m-out.log` (TUI, not structured JSON)
 - **Source:** `/root/workspace/PolymarketBTC15mAssistant/src/index.js`
 - **Trade mode:** `TRADE_MOCK_MODE=false` — real orders via Polymarket CLOB v2
 - **Restart:** `pm2 restart btc-15m`
