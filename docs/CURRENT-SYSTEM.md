@@ -132,7 +132,7 @@ stake = min(stake, maxStake)
 
 | Rule | Threshold | Effect |
 |---|---|---|
-| Cycle floor | bankroll < $15 | `cycleEnded=true`, no entries |
+| Cycle floor | bankroll < $0 | `cycleEnded=true`, no entries |
 | Session ceiling | bankroll ≥ $25 | no entries |
 | Losing streak half-stake | streak ≥ 3 | stake × 0.5 |
 | Losing streak pause | streak ≥ 5 | `paused=true`, no entries |
@@ -199,7 +199,7 @@ LOSS → `losingStreak += 1`; if ≥ 5 → `paused = true`
 | `MAX_POSITIONS` | 1 | risk-management.js |
 | `MAX_EXPOSURE_PCT` | 1.0 (100%) | risk-management.js |
 | `SESSION_CEILING` | $25.00 | risk-management.js |
-| `CYCLE_FLOOR` | $15.00 | risk-management.js |
+| `CYCLE_FLOOR` | $0.00 | risk-management.js |
 | `WITHDRAWAL_TRIGGER` | $150.00 | risk-management.js |
 | `WITHDRAWAL_AMOUNT` | $100.00 | risk-management.js |
 | `BANKROLL_RESET_TO` | $50.00 | risk-management.js |

@@ -327,11 +327,11 @@ Every 30 seconds, the bot fetches the real USDC collateral balance from the Poly
 Checked every loop cycle:
 
 ```
-floor = $15 (cycle 1 and all subsequent cycles)
+floor = $0 (cycle 1 and all subsequent cycles)
 if bankroll < floor → cycleEnded = true → all entries blocked
 ```
 
-If the bankroll recovers above $15 (e.g. after a top-up and balance sync), `cycleEnded` resets to `false` and trading resumes automatically.
+If the bankroll recovers above $0 (e.g. after a top-up and balance sync), `cycleEnded` resets to `false` and trading resumes automatically.
 
 ### Session ceiling
 
@@ -386,7 +386,7 @@ Additionally, `prob_market` for ETH DOWN is 0.06 — far below `MIN_MARKET_PROB 
 | `MAX_POSITIONS` | 1 | `risk-management.js` |
 | `MAX_EXPOSURE_PCT` | 1.0 (100%) | `risk-management.js` |
 | `SESSION_CEILING` | $25.00 | `risk-management.js` |
-| `CYCLE_FLOOR` | $15.00 | `risk-management.js` |
+| `CYCLE_FLOOR` | $0.00 | `risk-management.js` |
 | `WITHDRAWAL_TRIGGER` | $150.00 | `risk-management.js` |
 | `WITHDRAWAL_AMOUNT` | $100.00 | `risk-management.js` |
 | `BANKROLL_RESET_TO` | $50.00 | `risk-management.js` |

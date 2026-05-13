@@ -17,8 +17,8 @@ const BANKROLL_RISK_CAP = 0.15;    // max 15% of bankroll per trade
 const TRADE_SLIPPAGE_DEFAULT = 0.01;
 
 const CYCLE_FLOOR = {
-  initial: 15,
-  recurring: 15
+  initial: 0,
+  recurring: 0
 };
 
 function recalcExposure(state) {
