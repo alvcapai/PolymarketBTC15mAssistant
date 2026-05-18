@@ -1,0 +1,32 @@
+{
+  "version": "1.0.0",
+  "limits": {
+    "min_net_edge": 0.08,
+    "max_edge": 0.50,
+    "min_prob": 0.62,
+    "min_market_prob": 0.56,
+    "max_entry_price": 0.65,
+    "max_stake_pct": 0.10,
+    "max_stake_absolute": 10.0,
+    "max_positions": 1,
+    "max_exposure_pct": 1.0,
+    "min_trade_size": 1.0
+  },
+  "market": {
+    "taker_fee_bps": 156,
+    "trade_slippage_default": 0.01
+  },
+  "bankroll": {
+    "withdrawal_trigger": 150,
+    "withdrawal_amount": 100,
+    "bankroll_reset_to": 50,
+    "risk_cap": 0.15
+  },
+  "cycle": {
+    "floor_initial": 0,
+    "floor_recurring": 0
+  },
+  "shares": {
+    "min_shares": 5
+  }
+}
