@@ -1,14 +1,36 @@
 import { logger } from "../logging/logger.js";
+import { getConfig } from "../config-loader.js";
 import { getSideWinRate, recordOutcome } from "./side-performance.js";
+
+// Dynamic configuration getters
+export function getMinNetEdge() { return getConfig().limits.min_net_edge; }
+export function getMaxEdge() { return getConfig().limits.max_edge; }
+export function getMinProb() { return getConfig().limits.min_prob; }
+export function getMinMarketProb() { return getConfig().limits.min_market_prob; }
+export function getMaxStakePct() { return getConfig().limits.max_stake_pct; }
+export function getMaxStakeAbsolute() { return getConfig().limits.max_stake_absolute; }
+export function getMaxEntryPrice() { return getConfig().limits.max_entry_price; }
+export function getMaxPositions() { return getConfig().limits.max_positions; }
+export function getMaxExposurePct() { return getConfig().limits.max_exposure_pct; }
+export function getMinTradeSize() { return getConfig().limits.min_trade_size; }
+export function getTakerFeeBps() { return getConfig().market.taker_fee_bps; }
+export function getTradeSlippageDefault() { return getConfig().market.trade_slippage_default; }
+export function getWithdrawalTrigger() { return getConfig().bankroll.withdrawal_trigger; }
+export function getWithdrawalAmount() { return getConfig().bankroll.withdrawal_amount; }
+export function getBankrollResetTo() { return getConfig().bankroll.bankroll_reset_to; }
+export function getBankrollRiskCap() { return getConfig().bankroll.risk_cap; }
+export function getMinShares() { return getConfig().shares.min_shares; }
+
+// Backward compatibility exports (deprecated)
 
 export const MIN_NET_EDGE = 0.08; // was 0.05
 export const MAX_EDGE = 0.50;
-const TAKER_FEE_BPS = 156; // conservative upper bound for 15m market taker fee (~1.56%)
+const TAKER_FEE_BPS = getTakerFeeBps(); // conservative upper bound for 15m market taker fee (~1.56%)
 export const MIN_PROB = 0.62; // was 0.56
 export const MIN_MARKET_PROB = 0.56;
-const MAX_STAKE_PCT = 0.10;      // reduced from 15% -> 10% per trade
+const MAX_STAKE_PCT = getMaxStakePct();      // reduced from 15% -> 10% per trade
 export const MAX_ENTRY_PRICE = 0.65; // NEW: refuse entries when best-ask > 0.65
-const MAX_STAKE_ABSOLUTE = 10.0; // hard cap regardless of bankroll size
+const MAX_STAKE_ABSOLUTE = getMaxStakeAbsolute(); // hard cap regardless of bankroll size
 export const MAX_POSITIONS = 1;
 export const MAX_EXPOSURE_PCT = 1.0;
 export const WITHDRAWAL_TRIGGER = 150;
@@ -16,9 +38,9 @@ export const WITHDRAWAL_AMOUNT = 100;
 export const BANKROLL_RESET_TO = 50;
 export const MIN_TRADE_SIZE = 1.0;
 
-const MIN_SHARES = 5;            // Polymarket minimum share size
-const BANKROLL_RISK_CAP = 0.15;    // max 15% of bankroll per trade
-const TRADE_SLIPPAGE_DEFAULT = 0.01;
+const MIN_SHARES = getMinShares();            // Polymarket minimum share size
+const BANKROLL_RISK_CAP = getBankrollRiskCap();    // max 15% of bankroll per trade
+const TRADE_SLIPPAGE_DEFAULT = getTradeSlippageDefault();
 
 const CYCLE_FLOOR = {
   initial: 0,
@@ -61,19 +83,19 @@ export function syncBankroll(state, realBalance) {
 
 export function checkWithdrawal(state) {
   const freeCapital = state.bankroll - state.totalExposure;
-  if (freeCapital >= WITHDRAWAL_TRIGGER) {
+  if (freeCapital >= getWithdrawalTrigger()) {
     return {
       shouldWithdraw: true,
-      withdrawAmount: WITHDRAWAL_AMOUNT,
-      resetTo: state.bankroll - WITHDRAWAL_AMOUNT
+      withdrawAmount: getWithdrawalAmount(),
+      resetTo: state.bankroll - getWithdrawalAmount()
     };
   }
   return { shouldWithdraw: false, withdrawAmount: 0, resetTo: 0 };
 }
 
 export function recordWithdrawal(state) {
-  state.totalWithdrawn += WITHDRAWAL_AMOUNT;
-  state.bankroll = BANKROLL_RESET_TO;
+  state.totalWithdrawn += getWithdrawalAmount();
+  state.bankroll = getBankrollResetTo();
   state.cycleNumber += 1;
   state.losingStreak = 0;
   state.paused = false;
@@ -96,11 +118,11 @@ export function checkCycleFloor(state) {
 }
 
 function computeMaxStake(bankroll) {
-  return Math.min(bankroll * MAX_STAKE_PCT, MAX_STAKE_ABSOLUTE);
+  return Math.min(bankroll * getMaxStakePct(), getMaxStakeAbsolute());
 }
 
 export function edgeMultiplier(edge) {
-  if (!Number.isFinite(edge) || edge < MIN_NET_EDGE) return 0;
+  if (!Number.isFinite(edge) || edge < getMinNetEdge()) return 0;
   if (edge < 0.06) return 0.4;
   if (edge < 0.09) return 0.6;
   if (edge < 0.12) return 0.8;
@@ -110,7 +132,7 @@ export function edgeMultiplier(edge) {
 export function stakeBase(bankroll) {
   if (!Number.isFinite(bankroll) || bankroll <= 0) return MIN_TRADE_SIZE;
   const pct = 0.15; // Flat 15% rate, avoiding sudden cliffs
-  return Math.max(bankroll * pct, MIN_TRADE_SIZE);
+  return Math.max(bankroll * pct, getMinTradeSize());
 }
 
 export function computeStake(state, edge, basisStdDev = null) {
@@ -128,7 +150,7 @@ export function computeStake(state, edge, basisStdDev = null) {
   if (state.losingStreak >= 3) {
     stake *= 0.5;
   }
-  stake = Math.max(stake, MIN_TRADE_SIZE);
+  stake = Math.max(stake, getMinTradeSize());
   return Math.min(stake, maxStake);
 }
 
@@ -184,7 +206,7 @@ export function decideEntry(state, {
   // Hard guard: entry price cap
   const rawPrice = toFiniteOrNull(side === "UP" ? priceUp : priceDown);
   const tokenPrice = rawPrice !== null ? rawPrice + slippage : null;
-  if (tokenPrice !== null && tokenPrice > MAX_ENTRY_PRICE) {
+  if (tokenPrice !== null && tokenPrice > getMaxEntryPrice()) {
     return {
       canEnter: false,
       reason: `entry_price_too_high (price=${tokenPrice.toFixed(3)} > cap=${MAX_ENTRY_PRICE})`,
@@ -206,7 +228,7 @@ export function decideEntry(state, {
   if (state.cycleEnded) {
     return { canEnter: false, reason: "cycle_ended", side, probModel, probMarket, edge: netEdge, rawEdge, edgeUp, edgeDown, stake: 0 };
   }
-  if (state.openPositions >= MAX_POSITIONS) {
+  if (state.openPositions >= getMaxPositions()) {
     return {
       canEnter: false,
       reason: `max_positions_${MAX_POSITIONS}_reached`,
@@ -239,7 +261,7 @@ export function decideEntry(state, {
     }
   }
 
-  if (probModel < MIN_PROB) {
+  if (probModel < getMinProb()) {
     return {
       canEnter: false,
       reason: `prob_model_${probModel.toFixed(4)}_below_${MIN_PROB}`,
@@ -253,7 +275,7 @@ export function decideEntry(state, {
       stake: 0
     };
   }
-  if (probMarket < MIN_MARKET_PROB) {
+  if (probMarket < getMinMarketProb()) {
     return {
       canEnter: false,
       reason: `prob_market_${probMarket.toFixed(4)}_below_${MIN_MARKET_PROB}`,
@@ -267,7 +289,7 @@ export function decideEntry(state, {
       stake: 0
     };
   }
-  if (netEdge < MIN_NET_EDGE || rawEdge > MAX_EDGE) {
+  if (netEdge < getMinNetEdge() || rawEdge > getMaxEdge()) {
     return {
       canEnter: false,
       reason: `net_edge_${netEdge.toFixed(4)}_out_of_range_${MIN_NET_EDGE}_${MAX_EDGE}`,
@@ -300,7 +322,7 @@ export function decideEntry(state, {
     stake = Math.min(Math.max(stake, minViableStake), riskCap);
   }
 
-  if (!Number.isFinite(stake) || stake < MIN_TRADE_SIZE) {
+  if (!Number.isFinite(stake) || stake < getMinTradeSize()) {
     return {
       canEnter: false,
       reason: `stake_${stake}_below_min_${MIN_TRADE_SIZE}`,
@@ -315,12 +337,12 @@ export function decideEntry(state, {
     };
   }
 
-  const maxExposure = state.bankroll * MAX_EXPOSURE_PCT;
+  const maxExposure = state.bankroll * getMaxExposurePct();
   const nextExposure = state.totalExposure + stake;
   if (nextExposure > maxExposure) {
     return {
       canEnter: false,
-      reason: `exposure_${nextExposure.toFixed(2)}_exceeds_${maxExposure.toFixed(2)}_${(MAX_EXPOSURE_PCT * 100).toFixed(0)}pct`,
+      reason: `exposure_${nextExposure.toFixed(2)}_exceeds_${maxExposure.toFixed(2)}_${(getMaxExposurePct() * 100).toFixed(0)}pct`,
       side,
       probModel,
       probMarket,
