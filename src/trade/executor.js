@@ -24,7 +24,7 @@ const WITHDRAWAL_ADDRESS = String(
 ).trim();
 
 // USDC on Polygon mainnet
-const USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
+const USDC_ADDRESS = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359";
 
 // ─── ABIs ────────────────────────────────────────────────────────────────────
 
@@ -405,6 +405,7 @@ export async function executeTrade(marketTokenId, side, sizeUsdc, limitPrice, pr
 
   // Removed ensureBalanceAllowance() from hot path
   // CLOB V2: createAndPostOrder creates, signs, and posts in one call
+  await ensureBalanceAllowance();
   let response;
   try {
     response = await clobClient.createAndPostOrder(
@@ -471,6 +472,7 @@ export async function executeSell(tokenId, shareSize, limitPrice) {
   logger.info({ component: "executor", action: "SELL", tokenId: token, shareSize: roundedSize, price: roundedPrice }, "Placing SELL order");
 
   // Removed ensureBalanceAllowance() from hot path
+  await ensureBalanceAllowance();
   let response;
   try {
     response = await clobClient.createAndPostOrder(

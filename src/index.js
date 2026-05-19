@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { initConfigLoader } from "./config-loader.js";
 import { CONFIG } from "./config.js";
 import { fetchKlines, fetchLastPrice } from "./data/binance.js";
 import { fetchChainlinkBtcUsd } from "./data/chainlink.js";
@@ -22,6 +23,9 @@ import { computeEdge } from "./engines/edge.js";
 import { calibrateModelProbabilities } from "./engines/signal-validation.js";
 import {
   createBankrollState,
+  initStateManager,
+  loadBankrollState,
+  saveBankrollState,
   syncBankroll,
   checkWithdrawal,
   recordWithdrawal,
@@ -32,7 +36,6 @@ import {
   formatDiagnostics,
   MIN_TRADE_SIZE
 } from "./engines/risk-management.js";
-import { saveBankrollState, loadBankrollState } from "./engines/bankroll-persist.js";
 import { appendCsvRow, formatNumber, formatPct, getCandleWindowTiming, sleep } from "./utils.js";
 import { startBinanceTradeStream } from "./data/binanceWs.js";
 import {
@@ -232,6 +235,16 @@ function processOutcomeEvents(bankrollState, events) {
 }
 
 async function main() {
+  // Initialize configuration and state management
+  try {
+    initConfigLoader();
+    initStateManager("./data/bankroll-state.json");
+    logger.info("[init] Bot initialization completed successfully");
+  } catch (error) {
+    logger.error("[init] Bot initialization failed:", error);
+    process.exit(1);
+  }
+
   const binanceStream = startBinanceTradeStream({ symbol: CONFIG.symbol });
   const polymarketLiveStream = startPolymarketChainlinkPriceStream({
     symbolIncludes: CONFIG.polymarket.wsSymbolFilter
@@ -553,18 +566,18 @@ async function main() {
       } else {
         const isUp = decision.side === "UP";
         const targetTokenId = isUp ? poly.tokens.upTokenId : poly.tokens.downTokenId;
-        const rawPrice = isUp ? rawPriceUp : rawPriceDown;
-        const rawPriceNum = Number(rawPrice);
+        const rawPriceValue = isUp ? rawPriceUp : rawPriceDown;
+        const rawPriceNum = Number(rawPriceValue);
         const targetPrice = Number.isFinite(rawPriceNum)
           ? Math.min(Math.round((rawPriceNum + tradeSlippage) * 100) / 100, 0.97)
-          : rawPriceNum;
+          : rawPriceValue;
 
         if (!targetTokenId) {
           logger.error({ component: "auto-trade", side: decision.side }, "Blocked — missing tokenId");
         } else if (tradedTokens.has(targetTokenId)) {
           logger.warn({ component: "auto-trade", targetTokenId }, "Blocked — token already traded this session");
         } else if (!Number.isFinite(targetPrice) || targetPrice <= 0) {
-          logger.error({ component: "auto-trade", rawPrice }, "Blocked — invalid price");
+          logger.error({ component: "auto-trade", rawPriceValue }, "Blocked — invalid price");
         } else if (!Number.isFinite(decision.stake) || decision.stake < MIN_TRADE_SIZE) {
           logger.error({ component: "auto-trade", stake: decision.stake }, "Blocked — invalid stake");
         } else if (isPlacingOrder) {

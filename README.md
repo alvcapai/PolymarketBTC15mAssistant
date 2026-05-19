@@ -200,3 +200,9 @@ npm start
 
 This is not financial advice. Use at your own risk.
 
+
+## ⚠️ AVISO CRÍTICO: INTEGRAÇÃO CLOB v2 E USDC
+
+* **É estritamente PROIBIDO remover a chamada `ensureBalanceAllowance()`** (que executa `client.updateBalanceAllowance()`) do hot path de execução de ordens (`executeTrade` / `executeSell`).
+  * **Justificativa:** O motor de matching (CLOB) da Polymarket é off-chain e faz cache de saldo. Sem essa chamada, ele não lê o saldo on-chain e rejeita a ordem com "balance: 0". Não tente otimizar a latência removendo isso.
+* **O token correto a ser utilizado é o USDC Nativo na Polygon** (`0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359`). Não utilize o antigo USDC.e (Bridged).
